@@ -1,3 +1,6 @@
+import { dryrun } from '@permaweb/aoconnect/browser';
+import { AoMessage } from './AoMessage';
+
 export class Token {
     constructor(
         public readonly id: string,
@@ -17,6 +20,22 @@ export class Token {
             this,
             BigInt(intPart + decPart.slice(0, this.denomination).padEnd(this.denomination, '0')),
         );
+    }
+
+    async balanceOf(wallet: string): Promise<TokenQuantity> {
+        const res = await dryrun({
+            process: this.id,
+            tags: AoMessage.toTagsArray({
+                Action: 'Balance',
+                Target: wallet,
+            }),
+        });
+
+        const quantity = res.Messages.at(0)?.Tags.find(
+            (tag: { name: string; value: string }) => tag.name === 'Balance',
+        )?.value;
+
+        return new TokenQuantity(this, BigInt(quantity ?? '0'));
     }
 }
 

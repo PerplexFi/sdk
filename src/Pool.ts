@@ -1,4 +1,7 @@
+import { createDataItemSigner, message } from '@permaweb/aoconnect';
+
 import { Token, TokenQuantity } from './Token';
+import { AoMessage, lookForMessage } from './AoMessage';
 
 type PoolReserves = {
     base: TokenQuantity;
@@ -32,14 +35,6 @@ export class Pool {
             quote: reserves.quote,
             lastFetchedAt: new Date(),
         };
-    }
-
-    async updateReserves(): Promise<void> {
-        if (this.#reserves.lastFetchedAt && Date.now() - this.#reserves.lastFetchedAt.getTime() <= 60_000) {
-            return;
-        }
-
-        // TODO: Fetch reserves using dryrun on Pool process
     }
 
     getExpectedOutput(input: TokenQuantity, slippageTolerance = 0): TokenQuantity {
@@ -92,4 +87,89 @@ export class Pool {
 
         throw new Error('Invalid token');
     }
+
+    async updateReserves(): Promise<void> {
+        if (this.#reserves.lastFetchedAt && Date.now() - this.#reserves.lastFetchedAt.getTime() <= 60_000) {
+            return;
+        }
+
+        // TODO: Fetch reserves using dryrun on Pool process
+    }
+
+    async swap(args: {
+        signer: ReturnType<typeof createDataItemSigner>;
+        input: TokenQuantity;
+        minExpectedOutput: TokenQuantity;
+    }): Promise<Swap> {
+        // 0. Assert args are valid
+        if (args.input.token.id !== this.tokenBase.id && args.input.token.id !== this.tokenQuote.id) {
+            throw new Error("Invalid args.input's token");
+        }
+
+        if (args.minExpectedOutput.token.id !== this.oppositeToken(args.input.token).id) {
+            throw new Error("Invalid args.minExpectedOutput's token");
+        }
+
+        // 1. Forge message tags and send it
+        const transferId = await message({
+            process: args.input.token.id,
+            signer: args.signer,
+            tags: AoMessage.toTagsArray({
+                Action: 'Transfer',
+                Recipient: this.id,
+                Quantity: args.input.quantity,
+                'X-Operation-Type': 'Swap',
+                'X-Minimum-Expected-Output': args.minExpectedOutput.quantity,
+            }),
+        });
+
+        // 2. Poll gateway to find the resulting message
+        const confirmationMessage = await lookForMessage({
+            tagsFilter: [
+                {
+                    name: 'Action',
+                    values: ['Transfer'],
+                },
+                {
+                    name: 'From-Process',
+                    values: [this.id],
+                },
+                {
+                    name: 'Pushed-For',
+                    values: [transferId],
+                },
+            ],
+            pollArgs: {
+                maxRetries: 40,
+                retryAfterMs: 500, // 40*500ms = 20s
+            },
+        });
+        // 3. If message no message is found, consider the swap has failed
+        if (!confirmationMessage) {
+            throw new Error('Swap has failed');
+        }
+
+        if (confirmationMessage.to !== args.minExpectedOutput.token.id) {
+            // Can happen if the slippage was too big. Confirm by querying aoconnect's `result` and check the Output/Messages?
+            throw new Error(`Swap has failed. More infos: https://ao.link/#/message/${transferId}`);
+        }
+
+        return new Swap(
+            transferId,
+            args.input,
+            new TokenQuantity(args.minExpectedOutput.token, BigInt(confirmationMessage.tags['Quantity'])),
+            new TokenQuantity(args.minExpectedOutput.token, BigInt(confirmationMessage.tags['X-Fees'])),
+            Number(confirmationMessage.tags['X-Price']),
+        );
+    }
+}
+
+export class Swap {
+    constructor(
+        public readonly id: string,
+        public readonly input: TokenQuantity,
+        public readonly output: TokenQuantity,
+        public readonly fees: TokenQuantity,
+        public readonly price: number,
+    ) {}
 }
