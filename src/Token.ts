@@ -1,4 +1,5 @@
-import { dryrun } from '@permaweb/aoconnect/browser';
+import { dryrun } from '@permaweb/aoconnect';
+
 import { AoMessage } from './AoMessage';
 
 export class Token {

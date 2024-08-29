@@ -1,4 +1,4 @@
-import { createDataItemSigner, message } from '@permaweb/aoconnect';
+import { createDataItemSigner, dryrun, message } from '@permaweb/aoconnect';
 
 import { Token, TokenQuantity } from './Token';
 import { AoMessage, lookForMessage } from './AoMessage';
@@ -94,6 +94,27 @@ export class Pool {
         }
 
         // TODO: Fetch reserves using dryrun on Pool process
+        const dryrunRes = await dryrun({
+            process: this.id,
+            tags: [
+                {
+                    name: 'Action',
+                    value: 'Reserves',
+                },
+            ],
+        });
+
+        const outputMessage = dryrunRes.Messages.at(0);
+        if (outputMessage) {
+            const reserves = JSON.parse(outputMessage.Data);
+            this.reserves = {
+                base: new TokenQuantity(this.#reserves.base.token, BigInt(reserves[this.#reserves.base.token.id])),
+                quote: new TokenQuantity(this.#reserves.quote.token, BigInt(reserves[this.#reserves.quote.token.id])),
+            };
+        } else {
+            // Can happen if process is not responding
+            throw new Error('Failed to update reserves');
+        }
     }
 
     async swap(args: {

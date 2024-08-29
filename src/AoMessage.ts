@@ -1,3 +1,13 @@
+import {
+    GetTransactionByIdQuery,
+    GetTransactionByIdQueryData,
+    GetTransactionByIdQueryVariables,
+    GetTransactionsQuery,
+    GetTransactionsQueryData,
+    GetTransactionsQueryVariables,
+    queryGateway,
+} from './utils/goldsky';
+
 type GqlTransactionFragment = {
     id: string;
     recipient: string;
@@ -29,36 +39,20 @@ export class AoMessage {
             value: `${value}`,
         }));
     }
-}
 
-const GetTransactionsQuery = /* GraphQL */ `
-    query transactions($tagsFilter: [TagFilter!]!, $min: Int!) {
-        transactions(
-            first: 100
-            sort: INGESTED_AT_ASC
-            ingested_at: { min: $min }
-            tags: $tagsFilter
-        ) {
-            edges {
-                node {
-                    id
-                    ingested_at
-                    owner {
-                        address
-                    }
-                    recipient
-                    tags {
-                        name
-                        value
-                    }
-                }
-            }
+    static async getById(messageId: string): Promise<AoMessage | null> {
+        const data = await queryGateway<GetTransactionByIdQueryData, GetTransactionByIdQueryVariables>(
+            GetTransactionByIdQuery,
+            { id: messageId },
+        );
+
+        if (data.transaction) {
+            return new AoMessage(data.transaction);
         }
+
+        return null;
     }
-`
-    .replace(/(#.*)/g, '') // Remove comments (if any)
-    .replace(/\s+/g, ' ') // Remove useless spaces/newlines
-    .trim();
+}
 
 /**
  * This function expects only one message to be matching the tags.
@@ -71,23 +65,14 @@ export async function lookForMessage(args: {
     const min = Math.floor(Date.now() / 1000);
     for (let retryCount = 0; retryCount < args.pollArgs.maxRetries; retryCount += 1) {
         // 1. fetch
-        const res = await fetch('https://arweave-search.goldsky.com/graphql', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                query: GetTransactionsQuery,
-                variables: {
-                    tagsFilter: args.tagsFilter,
-                    min,
-                },
-            }),
-        }).then((r) => r.json());
+        const data = await queryGateway<GetTransactionsQueryData, GetTransactionsQueryVariables>(GetTransactionsQuery, {
+            tagsFilter: args.tagsFilter,
+            min,
+        });
 
-        const message = res?.data?.transactions?.edges?.at(0);
+        const message = data?.transactions?.edges?.at(0);
         if (message) {
-            return message;
+            return new AoMessage(message.node);
         }
 
         await new Promise((resolve) => {

@@ -1,13 +1,38 @@
 {
-    "name": "perplex-sdk",
+    "name": "@perplexfi/sdk",
     "version": "0.0.1",
     "author": "Perplex <tech@perplex.finance>",
     "license": "MIT",
-    "description": "Perplex SDK",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts",
+    "description": "PerplexFi SDK",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/PerplexFi/sdk.git"
+    },
+    "type": "module",
+    "files": [
+        "./dist"
+    ],
+    "exports": {
+        ".": {
+            "webpack": "./dist/index.browser.js",
+            "browser": "./dist/index.browser.js",
+            "import": "./dist/index.js",
+            "require": "./dist/index.cjs"
+        },
+        "./browser": "./dist/index.browser.js",
+        "./node": "./dist/index.js"
+    },
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "browser": "./dist/index.browser.js",
+    "types": "./dist/index.d.ts",
+    "engines": {
+        "node": ">=20"
+    },
     "scripts": {
-        "build": "tsc"
+        "build": "rimraf dist && npm run build:types && npm run build:src",
+        "build:src": "node esbuild.mjs",
+        "build:types": "tsc"
     },
     "devDependencies": {
         "@eslint/js": "^9.9.0",
@@ -19,11 +44,11 @@
         "eslint-plugin-prettier": "^5.2.1",
         "globals": "^15.9.0",
         "prettier": "^3.3.3",
+        "rimraf": "^6.0.1",
         "typescript": "^5.5.4",
         "typescript-eslint": "^8.1.0"
     },
     "dependencies": {
-        "@permaweb/aoconnect": "^0.0.58",
-        "decimal.js": "^10.4.3"
+        "@permaweb/aoconnect": "^0.0.58"
     }
 }
