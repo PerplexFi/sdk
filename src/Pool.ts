@@ -1,7 +1,7 @@
 import { createDataItemSigner, dryrun, message } from '@permaweb/aoconnect';
 
-import { Token, TokenQuantity } from './Token';
 import { AoMessage, lookForMessage } from './AoMessage';
+import { Token, TokenQuantity } from './Token';
 
 type PoolReserves = {
     base: TokenQuantity;
@@ -9,15 +9,43 @@ type PoolReserves = {
     lastFetchedAt: Date | null;
 };
 
+type PoolConstructor = {
+    id: string;
+    tokenBase: Token;
+    tokenQuote: Token;
+    feeRate: number;
+};
+
 export class Pool {
     #reserves: PoolReserves;
+    public readonly id: string;
+    public readonly tokenBase: Token;
+    public readonly tokenQuote: Token;
+    public readonly feeRate: number;
 
-    constructor(
-        public readonly id: string,
-        public readonly tokenBase: Token,
-        public readonly tokenQuote: Token,
-        public readonly feeRate: number,
-    ) {
+    constructor({ id, tokenBase, tokenQuote, feeRate }: PoolConstructor) {
+        if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{43}$/.test(id)) {
+            throw new Error('id must be a valid AO processId');
+        }
+        this.id = id;
+
+        if (!(tokenBase instanceof Token)) {
+            throw new Error('tokenBase must be an instance of Token');
+        }
+        if (!(tokenQuote instanceof Token)) {
+            throw new Error('tokenQuote must be an instance of Token');
+        }
+        if (tokenBase.id === tokenQuote.id) {
+            throw new Error('tokenBase must be different from tokenQuote');
+        }
+        this.tokenBase = tokenBase;
+        this.tokenQuote = tokenQuote;
+
+        if (typeof feeRate !== 'number' || feeRate < 0 || feeRate > 1) {
+            throw new Error('feeRate must be between 0 and 1');
+        }
+        this.feeRate = feeRate;
+
         this.#reserves = {
             base: new TokenQuantity(tokenBase, 0n),
             quote: new TokenQuantity(tokenQuote, 0n),

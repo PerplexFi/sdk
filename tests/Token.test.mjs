@@ -1,24 +1,50 @@
 import { describe, it } from 'node:test';
 
-import { Aetheris } from '../dist/index.js';
+import { Token } from '../dist/index.js';
 
-describe('Aetheris Tokens', () => {
-    it('Should have valid IDs', { todo: false }, ({ assert }) => {
-        assert.strictEqual(/^[a-zA-Z0-9_-]{43}$/.test(Aetheris.Tokens.AIR.id), true);
-        assert.strictEqual(/^[a-zA-Z0-9_-]{43}$/.test(Aetheris.Tokens.EARTH.id), true);
-        assert.strictEqual(/^[a-zA-Z0-9_-]{43}$/.test(Aetheris.Tokens.FIRE.id), true);
-        assert.strictEqual(/^[a-zA-Z0-9_-]{43}$/.test(Aetheris.Tokens.WATER.id), true);
+describe('Token', () => {
+    it('should throw if constructor receives invalid id', ({ assert }) => {
+        assert.throws(
+            () =>
+                new Token({
+                    id: 'invalid_id',
+                    name: 'name',
+                    ticker: 'ticker',
+                    denomination: 9,
+                }),
+        );
     });
-    it('Should have valid names', { todo: false }, ({ assert }) => {
-        assert.strictEqual(Aetheris.Tokens.AIR.name, 'Air');
-        assert.strictEqual(Aetheris.Tokens.EARTH.name, 'Earth');
-        assert.strictEqual(Aetheris.Tokens.FIRE.name, 'Fire');
-        assert.strictEqual(Aetheris.Tokens.WATER.name, 'Water');
+    it('should throw if constructor receives invalid name', ({ assert }) => {
+        assert.throws(
+            () =>
+                new Token({
+                    id: '0000000000000000000000000000000000000000000',
+                    name: 0,
+                    ticker: 'ticker',
+                    denomination: 9,
+                }),
+        );
     });
-    it('Should have valid tickers', { todo: false }, ({ assert }) => {
-        assert.strictEqual(Aetheris.Tokens.AIR.ticker, 'AIR');
-        assert.strictEqual(Aetheris.Tokens.EARTH.ticker, 'EARTH');
-        assert.strictEqual(Aetheris.Tokens.FIRE.ticker, 'FIRE');
-        assert.strictEqual(Aetheris.Tokens.WATER.ticker, 'WATER');
+    it('should throw if constructor receives invalid ticker', ({ assert }) => {
+        assert.throws(
+            () =>
+                new Token({
+                    id: '0000000000000000000000000000000000000000000',
+                    name: 'name',
+                    ticker: 0,
+                    denomination: 9,
+                }),
+        );
+    });
+    it('should throw if constructor receives invalid denomination', ({ assert }) => {
+        assert.throws(
+            () =>
+                new Token({
+                    id: '0000000000000000000000000000000000000000000',
+                    name: 'name',
+                    ticker: 'ticker',
+                    denomination: -1,
+                }),
+        );
     });
 });
