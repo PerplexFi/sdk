@@ -1,2 +1,6 @@
 // SDK entrypoint
-export { KnownPools, KnownTokens } from './constants';
+export * as Aetheris from './constants/Aetheris';
+
+export { Pool } from './Pool';
+
+export { Token } from './Token';

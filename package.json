@@ -34,6 +34,9 @@
         "build:src": "node esbuild.mjs",
         "build:types": "tsc"
     },
+    "dependencies": {
+        "@permaweb/aoconnect": "^0.0.58"
+    },
     "devDependencies": {
         "@eslint/js": "^9.9.0",
         "@types/eslint__js": "^8.42.3",
@@ -47,8 +50,5 @@
         "rimraf": "^6.0.1",
         "typescript": "^5.5.4",
         "typescript-eslint": "^8.1.0"
-    },
-    "dependencies": {
-        "@permaweb/aoconnect": "^0.0.58"
     }
 }

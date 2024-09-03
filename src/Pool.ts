@@ -93,7 +93,6 @@ export class Pool {
             return;
         }
 
-        // TODO: Fetch reserves using dryrun on Pool process
         const dryrunRes = await dryrun({
             process: this.id,
             tags: [
@@ -123,11 +122,16 @@ export class Pool {
         minExpectedOutput: TokenQuantity;
     }): Promise<Swap> {
         // 0. Assert args are valid
-        if (args.input.token.id !== this.tokenBase.id && args.input.token.id !== this.tokenQuote.id) {
+        if (
+            (args.input.token.id !== this.tokenBase.id && args.input.token.id !== this.tokenQuote.id) || // Make sure input token is valid
+            args.input.quantity <= 0n // Make sure quantity is valid
+        ) {
             throw new Error("Invalid args.input's token");
         }
 
-        if (args.minExpectedOutput.token.id !== this.oppositeToken(args.input.token).id) {
+        if (
+            args.minExpectedOutput.token.id !== this.oppositeToken(args.input.token).id // Make sure the expected output's token is indeed the opposite of the input
+        ) {
             throw new Error("Invalid args.minExpectedOutput's token");
         }
 
@@ -175,11 +179,13 @@ export class Pool {
             throw new Error(`Swap has failed. More infos: https://ao.link/#/message/${transferId}`);
         }
 
+        // Idea: update reserves locally with the token we just swapped
+
         return new Swap(
             transferId,
             args.input,
             new TokenQuantity(args.minExpectedOutput.token, BigInt(confirmationMessage.tags['Quantity'])),
-            new TokenQuantity(args.minExpectedOutput.token, BigInt(confirmationMessage.tags['X-Fees'])),
+            new TokenQuantity(args.input.token, BigInt(confirmationMessage.tags['X-Fees'])),
             Number(confirmationMessage.tags['X-Price']),
         );
     }
