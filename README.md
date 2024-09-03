@@ -48,7 +48,8 @@ const swap = await pool.swap({
     minExpectedOutput,
 });
 
-// Here the swap should be successful, if anything wrong happens, an error will be thrown
+// Here the swap should be successful
+// If anything wrong happens, an error will be thrown
 ```
 
 ## License

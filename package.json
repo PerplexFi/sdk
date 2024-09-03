@@ -32,7 +32,8 @@
     "scripts": {
         "build": "rimraf dist && npm run build:types && npm run build:src",
         "build:src": "node esbuild.mjs",
-        "build:types": "tsc"
+        "build:types": "tsc",
+        "test": "node --test tests"
     },
     "dependencies": {
         "@permaweb/aoconnect": "^0.0.58"
