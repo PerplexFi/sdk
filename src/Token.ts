@@ -7,6 +7,7 @@ type TokenConstructor = {
     name: string;
     ticker: string;
     denomination: number;
+    logo?: string;
 };
 
 export class Token {
@@ -14,8 +15,9 @@ export class Token {
     public readonly name: string;
     public readonly ticker: string;
     public readonly denomination: number;
+    public readonly logo: string | undefined;
 
-    constructor({ id, name, ticker, denomination }: TokenConstructor) {
+    constructor({ id, name, ticker, denomination, logo }: TokenConstructor) {
         if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{43}$/.test(id)) {
             throw new Error('id must be a valid AO processId');
         }
@@ -35,6 +37,11 @@ export class Token {
             throw new Error('denomination must be a positive number');
         }
         this.denomination = denomination;
+
+        if (typeof logo === 'string' && !/^[a-zA-Z0-9_-]{43}$/.test(logo)) {
+            throw new Error('logo must be a valid Arweave txId');
+        }
+        this.logo = logo;
     }
 
     fromReadable(quantity: string): TokenQuantity {
