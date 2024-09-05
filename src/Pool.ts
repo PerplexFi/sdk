@@ -1,7 +1,9 @@
 import { createDataItemSigner, dryrun, message } from '@permaweb/aoconnect';
+import * as z from 'zod';
 
 import { AoMessage, lookForMessage } from './AoMessage';
 import { Token, TokenQuantity } from './Token';
+import { ArweaveIdRegex } from './utils/arweave';
 
 type PoolReserves = {
     base: TokenQuantity;
@@ -9,12 +11,15 @@ type PoolReserves = {
     lastFetchedAt: Date | null;
 };
 
-type PoolConstructor = {
-    id: string;
-    tokenBase: Token;
-    tokenQuote: Token;
-    feeRate: number;
-};
+const PoolSchema = z
+    .object({
+        id: z.string().regex(ArweaveIdRegex, 'Must be a valid AO process ID'),
+        tokenBase: z.instanceof(Token),
+        tokenQuote: z.instanceof(Token),
+        feeRate: z.number().gte(0).lte(1),
+    })
+    .refine((params) => params.tokenBase.id !== params.tokenQuote.id);
+type PoolConstructor = z.infer<typeof PoolSchema>;
 
 export class Pool {
     #reserves: PoolReserves;
@@ -23,32 +28,16 @@ export class Pool {
     public readonly tokenQuote: Token;
     public readonly feeRate: number;
 
-    constructor({ id, tokenBase, tokenQuote, feeRate }: PoolConstructor) {
-        if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{43}$/.test(id)) {
-            throw new Error('id must be a valid AO processId');
-        }
-        this.id = id;
+    constructor(params: PoolConstructor) {
+        const { id, tokenBase, tokenQuote, feeRate } = PoolSchema.parse(params);
 
-        if (!(tokenBase instanceof Token)) {
-            throw new Error('tokenBase must be an instance of Token');
-        }
-        if (!(tokenQuote instanceof Token)) {
-            throw new Error('tokenQuote must be an instance of Token');
-        }
-        if (tokenBase.id === tokenQuote.id) {
-            throw new Error('tokenBase must be different from tokenQuote');
-        }
+        this.id = id;
         this.tokenBase = tokenBase;
         this.tokenQuote = tokenQuote;
-
-        if (typeof feeRate !== 'number' || feeRate < 0 || feeRate > 1) {
-            throw new Error('feeRate must be between 0 and 1');
-        }
         this.feeRate = feeRate;
-
         this.#reserves = {
-            base: new TokenQuantity(tokenBase, 0n),
-            quote: new TokenQuantity(tokenQuote, 0n),
+            base: new TokenQuantity({ token: tokenBase, quantity: 0n }),
+            quote: new TokenQuantity({ token: tokenQuote, quantity: 0n }),
             lastFetchedAt: null,
         };
     }
@@ -75,19 +64,19 @@ export class Pool {
         }
 
         // WARNING: Make sure reserves are the most up to date possible
-        if (!this.#reserves.lastFetchedAt) {
+        if (!this.reserves.lastFetchedAt) {
             throw new Error('Reserves not fetched yet');
         }
 
         const outputToken = this.oppositeToken(input.token);
         const reserves = {
-            [this.tokenBase.id]: this.#reserves.base,
-            [this.tokenQuote.id]: this.#reserves.quote,
+            [this.tokenBase.id]: this.reserves.base,
+            [this.tokenQuote.id]: this.reserves.quote,
         };
         const inputReserve = reserves[input.token.id];
         const outputReserve = reserves[outputToken.id];
 
-        const k = this.#reserves.base.quantity * this.#reserves.quote.quantity;
+        const k = this.reserves.base.quantity * this.reserves.quote.quantity;
 
         // Calculate the new output reserve after the trade
         const newOutputReserve = k / (inputReserve.quantity + input.quantity);
@@ -102,7 +91,7 @@ export class Pool {
         const minExpectedOutput =
             (outputAfterFee * (10_000n - BigInt(Math.round(slippageTolerance * 10_000)))) / 10_000n;
 
-        return new TokenQuantity(outputToken, minExpectedOutput);
+        return new TokenQuantity({ token: outputToken, quantity: minExpectedOutput });
     }
 
     oppositeToken(token: Token): Token {
@@ -117,7 +106,7 @@ export class Pool {
     }
 
     async updateReserves(): Promise<void> {
-        if (this.#reserves.lastFetchedAt && Date.now() - this.#reserves.lastFetchedAt.getTime() <= 60_000) {
+        if (this.reserves.lastFetchedAt && Date.now() - this.reserves.lastFetchedAt.getTime() <= 60_000) {
             return;
         }
 
@@ -133,10 +122,16 @@ export class Pool {
 
         const outputMessage = dryrunRes.Messages.at(0);
         if (outputMessage) {
-            const reserves = JSON.parse(outputMessage.Data);
+            const reservesJSON = JSON.parse(outputMessage.Data);
             this.reserves = {
-                base: new TokenQuantity(this.#reserves.base.token, BigInt(reserves[this.#reserves.base.token.id])),
-                quote: new TokenQuantity(this.#reserves.quote.token, BigInt(reserves[this.#reserves.quote.token.id])),
+                base: new TokenQuantity({
+                    token: this.reserves.base.token,
+                    quantity: BigInt(reservesJSON[this.reserves.base.token.id]),
+                }),
+                quote: new TokenQuantity({
+                    token: this.reserves.quote.token,
+                    quantity: BigInt(reservesJSON[this.reserves.quote.token.id]),
+                }),
             };
         } else {
             // Can happen if process is not responding
@@ -149,31 +144,13 @@ export class Pool {
         input: TokenQuantity;
         minExpectedOutput: TokenQuantity;
     }): Promise<Swap> {
-        // 0. Assert args are valid
-        if (
-            (args.input.token.id !== this.tokenBase.id && args.input.token.id !== this.tokenQuote.id) || // Make sure input token is valid
-            args.input.quantity <= 0n // Make sure quantity is valid
-        ) {
-            throw new Error("Invalid args.input's token");
-        }
-
-        if (
-            args.minExpectedOutput.token.id !== this.oppositeToken(args.input.token).id // Make sure the expected output's token is indeed the opposite of the input
-        ) {
-            throw new Error("Invalid args.minExpectedOutput's token");
-        }
+        const tags = this.prepareSwapMessageTags(args.input, args.minExpectedOutput);
 
         // 1. Forge message tags and send it
         const transferId = await message({
             process: args.input.token.id,
             signer: args.signer,
-            tags: AoMessage.toTagsArray({
-                Action: 'Transfer',
-                Recipient: this.id,
-                Quantity: args.input.quantity,
-                'X-Operation-Type': 'Swap',
-                'X-Minimum-Expected-Output': args.minExpectedOutput.quantity,
-            }),
+            tags,
         });
 
         // 2. Poll gateway to find the resulting message
@@ -197,6 +174,7 @@ export class Pool {
                 retryAfterMs: 500, // 40*500ms = 20s
             },
         });
+
         // 3. If message no message is found, consider the swap has failed
         if (!confirmationMessage) {
             throw new Error('Swap has failed');
@@ -207,24 +185,86 @@ export class Pool {
             throw new Error(`Swap has failed. More infos: https://ao.link/#/message/${transferId}`);
         }
 
-        // Idea: update reserves locally with the token we just swapped
+        const output = new TokenQuantity({
+            token: args.minExpectedOutput.token,
+            quantity: BigInt(confirmationMessage.tags['Quantity']),
+        });
 
-        return new Swap(
-            transferId,
-            args.input,
-            new TokenQuantity(args.minExpectedOutput.token, BigInt(confirmationMessage.tags['Quantity'])),
-            new TokenQuantity(args.input.token, BigInt(confirmationMessage.tags['X-Fees'])),
-            Number(confirmationMessage.tags['X-Price']),
-        );
+        if (args.input.token.id === this.reserves.base.token.id) {
+            this.reserves = {
+                base: this.reserves.base.add(args.input.quantity),
+                quote: this.reserves.quote.sub(output.quantity),
+            };
+        } else {
+            this.reserves = {
+                base: this.reserves.base.sub(output.quantity),
+                quote: this.reserves.quote.add(args.input.quantity),
+            };
+        }
+
+        return new Swap({
+            id: transferId,
+            input: args.input,
+            output,
+            fees: new TokenQuantity({
+                token: args.input.token,
+                quantity: BigInt(confirmationMessage.tags['X-Fees']),
+            }),
+            price: Number(confirmationMessage.tags['X-Price']),
+        });
+    }
+
+    prepareSwapMessageTags(
+        input: TokenQuantity,
+        minExpectedOutput: TokenQuantity,
+    ): Array<{ name: string; value: string }> {
+        // 0. Assert args are valid
+        if (
+            (input.token.id !== this.tokenBase.id && input.token.id !== this.tokenQuote.id) || // Make sure input token is valid
+            input.quantity <= 0n // Make sure quantity is valid
+        ) {
+            throw new Error("Invalid input's token");
+        }
+
+        if (
+            minExpectedOutput.token.id !== this.oppositeToken(input.token).id // Make sure the expected output's token is indeed the opposite of the input
+        ) {
+            throw new Error("Invalid minExpectedOutput's token");
+        }
+
+        return AoMessage.toTagsArray({
+            Action: 'Transfer',
+            Recipient: this.id,
+            Quantity: input.quantity,
+            'X-Operation-Type': 'Swap',
+            'X-Minimum-Expected-Output': minExpectedOutput.quantity,
+        });
     }
 }
 
+const SwapSchema = z.object({
+    id: z.string().regex(ArweaveIdRegex, 'Must be a valid AO message ID'),
+    input: z.instanceof(TokenQuantity),
+    output: z.instanceof(TokenQuantity),
+    fees: z.instanceof(TokenQuantity),
+    price: z.number().positive(),
+});
+type SwapConstructor = z.infer<typeof SwapSchema>;
+
 export class Swap {
-    constructor(
-        public readonly id: string,
-        public readonly input: TokenQuantity,
-        public readonly output: TokenQuantity,
-        public readonly fees: TokenQuantity,
-        public readonly price: number,
-    ) {}
+    public readonly id: string;
+    public readonly input: TokenQuantity;
+    public readonly output: TokenQuantity;
+    public readonly fees: TokenQuantity;
+    public readonly price: number;
+
+    constructor(params: SwapConstructor) {
+        const { id, input, output, fees, price } = SwapSchema.parse(params);
+
+        this.id = id;
+        this.input = input;
+        this.output = output;
+        this.fees = fees;
+        this.price = price;
+    }
 }

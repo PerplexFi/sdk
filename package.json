@@ -37,7 +37,8 @@
         "test:watch": "npm run build && node --test --watch tests/*.test.mjs"
     },
     "dependencies": {
-        "@permaweb/aoconnect": "^0.0.58"
+        "@permaweb/aoconnect": "^0.0.58",
+        "zod": "^3.23.8"
     },
     "devDependencies": {
         "@eslint/js": "^9.9.0",

@@ -1,14 +1,17 @@
 import { dryrun } from '@permaweb/aoconnect';
+import * as z from 'zod';
 
 import { AoMessage } from './AoMessage';
+import { ArweaveIdRegex } from './utils/arweave';
 
-type TokenConstructor = {
-    id: string;
-    name: string;
-    ticker: string;
-    denomination: number;
-    logo?: string;
-};
+const TokenSchema = z.object({
+    id: z.string().regex(ArweaveIdRegex, 'Must be a valid AO process ID'),
+    name: z.string(),
+    ticker: z.string(),
+    denomination: z.number().int().nonnegative(),
+    logo: z.string().regex(ArweaveIdRegex, 'Must be a valid Arweave txId').optional(),
+});
+type TokenConstructor = z.infer<typeof TokenSchema>;
 
 export class Token {
     public readonly id: string;
@@ -17,44 +20,27 @@ export class Token {
     public readonly denomination: number;
     public readonly logo: string | undefined;
 
-    constructor({ id, name, ticker, denomination, logo }: TokenConstructor) {
-        if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{43}$/.test(id)) {
-            throw new Error('id must be a valid AO processId');
-        }
+    constructor(params: TokenConstructor) {
+        const { id, name, ticker, denomination, logo } = TokenSchema.parse(params);
+
         this.id = id;
-
-        if (typeof name !== 'string') {
-            throw new Error('name must be a string');
-        }
         this.name = name;
-
-        if (typeof ticker !== 'string') {
-            throw new Error('ticker must be a string');
-        }
         this.ticker = ticker;
-
-        if (typeof denomination !== 'number' || denomination < 0) {
-            throw new Error('denomination must be a positive number');
-        }
         this.denomination = denomination;
-
-        if (typeof logo === 'string' && !/^[a-zA-Z0-9_-]{43}$/.test(logo)) {
-            throw new Error('logo must be a valid Arweave txId');
-        }
         this.logo = logo;
     }
 
     fromReadable(quantity: string): TokenQuantity {
-        if (!/^\d+(\.\d+)?$/.test(quantity)) {
+        if (typeof quantity !== 'string' || !/^\d+(\.\d+)?$/.test(quantity)) {
             throw new Error('Invalid quantity');
         }
 
         const [intPart, decPart = ''] = quantity.split('.');
 
-        return new TokenQuantity(
-            this,
-            BigInt(intPart + decPart.slice(0, this.denomination).padEnd(this.denomination, '0')),
-        );
+        return new TokenQuantity({
+            token: this,
+            quantity: BigInt(intPart + decPart.slice(0, this.denomination).padEnd(this.denomination, '0')),
+        });
     }
 
     async balanceOf(wallet: string): Promise<TokenQuantity> {
@@ -70,15 +56,25 @@ export class Token {
             (tag: { name: string; value: string }) => tag.name === 'Balance',
         )?.value;
 
-        return new TokenQuantity(this, BigInt(quantity ?? '0'));
+        return new TokenQuantity({ token: this, quantity: BigInt(quantity ?? '0') });
     }
 }
 
+const TokenQuantitySchema = z.object({
+    token: z.instanceof(Token),
+    quantity: z.bigint().nonnegative(),
+});
+type TokenQuantityConstructor = z.infer<typeof TokenQuantitySchema>;
+
 export class TokenQuantity {
-    constructor(
-        public readonly token: Token,
-        public readonly quantity: bigint,
-    ) {}
+    public readonly token: Token;
+    public readonly quantity: bigint;
+    constructor(params: TokenQuantityConstructor) {
+        const { token, quantity } = TokenQuantitySchema.parse(params);
+
+        this.token = token;
+        this.quantity = quantity;
+    }
 
     toReadable(): string {
         const qtyAsString = this.quantity.toString();
@@ -90,6 +86,22 @@ export class TokenQuantity {
         const decPart = qtyAsString.slice(-this.token.denomination).replace(/0+$/, '');
 
         return decPart ? `${intPart}.${decPart}` : intPart;
+    }
+
+    add(quantity: bigint): TokenQuantity {
+        if (typeof quantity !== 'bigint') {
+            throw new Error('Invalid quantity (expected bigint)');
+        }
+
+        return new TokenQuantity({ token: this.token, quantity: this.quantity + quantity });
+    }
+
+    sub(quantity: bigint): TokenQuantity {
+        if (typeof quantity !== 'bigint') {
+            throw new Error('Invalid quantity (expected bigint)');
+        }
+
+        return new TokenQuantity({ token: this.token, quantity: this.quantity - quantity });
     }
 
     equals(tokenQuantity: TokenQuantity): boolean {
