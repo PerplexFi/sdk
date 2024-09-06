@@ -11,13 +11,14 @@ import {
     OrderType,
     OrderTypeZodEnum,
 } from '../utils/order';
+import { PerpPrice } from './Price';
 
 const PerpOrderSchema = z.object({
     id: z.string().regex(ArweaveIdRegex, 'Must be a valid AO message ID'),
     type: OrderTypeZodEnum,
     side: OrderSideZodEnum,
     status: OrderStatusZodEnum,
-    baseToken: z.instanceof(Token),
+    token: z.instanceof(Token),
     originalQuantity: z.string().regex(/^\d+$/),
     executedQuantity: z.string().regex(/^\d+$/),
 });
@@ -53,18 +54,18 @@ export class PerpOrder {
     public readonly executedQuantity: TokenQuantity;
 
     constructor(params: PerpOrderConstructor) {
-        const { id, type, side, status, baseToken, originalQuantity, executedQuantity } = PerpOrderSchema.parse(params);
+        const { id, type, side, status, token, originalQuantity, executedQuantity } = PerpOrderSchema.parse(params);
 
         this.id = id;
         this.type = type;
         this.side = side;
         this.status = status;
         this.originalQuantity = new TokenQuantity({
-            token: baseToken,
+            token,
             quantity: BigInt(originalQuantity),
         });
         this.executedQuantity = new TokenQuantity({
-            token: baseToken,
+            token,
             quantity: BigInt(executedQuantity),
         });
     }

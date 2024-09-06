@@ -18,6 +18,4 @@ export class PerpPrice {
         this.market = market;
         this.value = value;
     }
-
-    // utils function?
 }
