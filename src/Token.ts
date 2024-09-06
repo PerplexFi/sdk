@@ -1,5 +1,5 @@
 import { dryrun } from '@permaweb/aoconnect';
-import * as z from 'zod';
+import { z } from 'zod';
 
 import { AoMessage } from './AoMessage';
 import { ArweaveIdRegex } from './utils/arweave';
@@ -19,8 +19,9 @@ export class Token {
     public readonly ticker: string;
     public readonly denomination: number;
     public readonly logo: string | undefined;
+    public readonly isAoToken: boolean;
 
-    constructor(params: TokenConstructor) {
+    constructor(params: TokenConstructor, isAoToken = true) {
         const { id, name, ticker, denomination, logo } = TokenSchema.parse(params);
 
         this.id = id;
@@ -28,6 +29,7 @@ export class Token {
         this.ticker = ticker;
         this.denomination = denomination;
         this.logo = logo;
+        this.isAoToken = isAoToken;
     }
 
     fromReadable(quantity: string): TokenQuantity {
@@ -44,9 +46,13 @@ export class Token {
     }
 
     async balanceOf(wallet: string): Promise<TokenQuantity> {
+        if (!this.isAoToken) {
+            return new TokenQuantity({ token: this, quantity: 0n });
+        }
+
         const res = await dryrun({
             process: this.id,
-            tags: AoMessage.toTagsArray({
+            tags: AoMessage.makeTags({
                 Action: 'Balance',
                 Target: wallet,
             }),

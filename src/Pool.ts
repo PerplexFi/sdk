@@ -1,5 +1,5 @@
 import { createDataItemSigner, dryrun, message } from '@permaweb/aoconnect';
-import * as z from 'zod';
+import { z } from 'zod';
 
 import { AoMessage, lookForMessage } from './AoMessage';
 import { Token, TokenQuantity } from './Token';
@@ -31,15 +31,15 @@ export class Pool {
     constructor(params: PoolConstructor) {
         const { id, tokenBase, tokenQuote, feeRate } = PoolSchema.parse(params);
 
-        this.id = id;
-        this.tokenBase = tokenBase;
-        this.tokenQuote = tokenQuote;
-        this.feeRate = feeRate;
         this.#reserves = {
             base: new TokenQuantity({ token: tokenBase, quantity: 0n }),
             quote: new TokenQuantity({ token: tokenQuote, quantity: 0n }),
             lastFetchedAt: null,
         };
+        this.id = id;
+        this.tokenBase = tokenBase;
+        this.tokenQuote = tokenQuote;
+        this.feeRate = feeRate;
     }
 
     get reserves(): PoolReserves {
@@ -144,7 +144,7 @@ export class Pool {
         input: TokenQuantity;
         minExpectedOutput: TokenQuantity;
     }): Promise<Swap> {
-        const tags = this.prepareSwapMessageTags(args.input, args.minExpectedOutput);
+        const tags = Swap.forgeTags(this, args.input, args.minExpectedOutput);
 
         // 1. Forge message tags and send it
         const transferId = await message({
@@ -169,6 +169,7 @@ export class Pool {
                     values: [transferId],
                 },
             ],
+            isMessageValid: (msg) => !!msg, // Message just has to exist to be valid
             pollArgs: {
                 maxRetries: 40,
                 retryAfterMs: 500, // 40*500ms = 20s
@@ -213,33 +214,6 @@ export class Pool {
             price: Number(confirmationMessage.tags['X-Price']),
         });
     }
-
-    prepareSwapMessageTags(
-        input: TokenQuantity,
-        minExpectedOutput: TokenQuantity,
-    ): Array<{ name: string; value: string }> {
-        // 0. Assert args are valid
-        if (
-            (input.token.id !== this.tokenBase.id && input.token.id !== this.tokenQuote.id) || // Make sure input token is valid
-            input.quantity <= 0n // Make sure quantity is valid
-        ) {
-            throw new Error("Invalid input's token");
-        }
-
-        if (
-            minExpectedOutput.token.id !== this.oppositeToken(input.token).id // Make sure the expected output's token is indeed the opposite of the input
-        ) {
-            throw new Error("Invalid minExpectedOutput's token");
-        }
-
-        return AoMessage.toTagsArray({
-            Action: 'Transfer',
-            Recipient: this.id,
-            Quantity: input.quantity,
-            'X-Operation-Type': 'Swap',
-            'X-Minimum-Expected-Output': minExpectedOutput.quantity,
-        });
-    }
 }
 
 const SwapSchema = z.object({
@@ -266,5 +240,32 @@ export class Swap {
         this.output = output;
         this.fees = fees;
         this.price = price;
+    }
+
+    static forgeTags(
+        pool: Pool,
+        input: TokenQuantity,
+        minExpectedOutput: TokenQuantity,
+    ): Array<{ name: string; value: string }> {
+        // 0. Assert args are valid
+        if (
+            (input.token.id !== pool.tokenBase.id && input.token.id !== pool.tokenQuote.id) || // Make sure input token is valid
+            input.quantity <= 0n // Make sure quantity is valid
+        ) {
+            throw new Error('Invalid input');
+        }
+
+        // Make sure the expected output's token is indeed the opposite of the input
+        if (minExpectedOutput.token.id !== pool.oppositeToken(input.token).id) {
+            throw new Error('Invalid minExpectedOutput');
+        }
+
+        return AoMessage.makeTags({
+            Action: 'Transfer',
+            Recipient: pool.id,
+            Quantity: input.quantity,
+            'X-Operation-Type': 'Swap',
+            'X-Minimum-Expected-Output': minExpectedOutput.quantity,
+        });
     }
 }

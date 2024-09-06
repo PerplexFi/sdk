@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import {
     GetTransactionByIdQuery,
     GetTransactionByIdQueryData,
@@ -7,18 +9,26 @@ import {
     GetTransactionsQueryVariables,
     queryGateway,
 } from './utils/goldsky';
+import { ArweaveIdRegex } from './utils/arweave';
 
-type GqlTransactionFragment = {
-    id: string;
-    recipient: string;
-    owner: {
-        address: string;
-    };
-    tags: Array<{
-        name: string;
-        value: string;
-    }>;
-};
+const AoMessageTagsSchema = z.array(
+    z.object({
+        name: z.string(),
+        value: z.string(),
+    }),
+);
+
+export type AoMessageTags = z.infer<typeof AoMessageTagsSchema>;
+
+const AoMessageSchema = z.object({
+    id: z.string().regex(ArweaveIdRegex),
+    owner: z.object({
+        address: z.string().regex(ArweaveIdRegex),
+    }),
+    recipient: z.string().regex(ArweaveIdRegex),
+    tags: AoMessageTagsSchema,
+});
+type AoMessageConstructor = z.infer<typeof AoMessageSchema>;
 
 export class AoMessage {
     public readonly id: string;
@@ -26,18 +36,25 @@ export class AoMessage {
     public readonly to: string;
     public readonly tags: Record<string, string>;
 
-    constructor(data: GqlTransactionFragment) {
-        this.id = data.id;
-        this.from = data.owner.address;
-        this.to = data.recipient;
-        this.tags = Object.fromEntries(data.tags.map(({ name, value }) => [name, value]));
+    constructor(data: AoMessageConstructor) {
+        const { id, owner, recipient, tags } = AoMessageSchema.parse(data);
+
+        this.id = id;
+        this.from = owner.address;
+        this.to = recipient;
+        this.tags = Object.fromEntries(tags.map(({ name, value }) => [name, value]));
     }
 
-    static toTagsArray(tags: Record<string, NonNullable<unknown>>): Array<{ name: string; value: string }> {
-        return Object.entries(tags).map(([name, value]) => ({
-            name,
-            value: `${value}`,
-        }));
+    static makeTags(tags: Record<string, unknown>): AoMessageTags {
+        return (
+            Object.entries(tags)
+                // Filter out tags with null/undefined value
+                .filter(([, value]) => value !== null && value !== undefined)
+                .map(([name, value]) => ({
+                    name,
+                    value: `${value}`,
+                }))
+        );
     }
 
     static async getById(messageId: string): Promise<AoMessage | null> {
@@ -60,9 +77,11 @@ export class AoMessage {
  */
 export async function lookForMessage(args: {
     tagsFilter: Array<{ name: string; values: string[] }>;
+    isMessageValid: (msg: AoMessage) => boolean;
     pollArgs: { retryAfterMs: number; maxRetries: number };
 }): Promise<AoMessage | null> {
-    const min = Math.floor(Date.now() / 1000);
+    let min = Math.floor(Date.now() / 1000);
+
     for (let retryCount = 0; retryCount < args.pollArgs.maxRetries; retryCount += 1) {
         // 1. fetch
         const data = await queryGateway<GetTransactionsQueryData, GetTransactionsQueryVariables>(GetTransactionsQuery, {
@@ -70,14 +89,18 @@ export async function lookForMessage(args: {
             min,
         });
 
-        const message = data?.transactions?.edges?.at(0);
-        if (message) {
-            return new AoMessage(message.node);
+        const transactions = data?.transactions?.edges ?? [];
+        for (const message of transactions) {
+            const aoMessage = new AoMessage(message.node);
+            if (args.isMessageValid(aoMessage)) {
+                return aoMessage;
+            }
         }
+        min = transactions.reduce((acc, cur) => Math.max(acc, cur.node.ingested_at), min);
 
         await new Promise((resolve) => {
-            // Sleep before trying again
-            setTimeout(resolve, args.pollArgs.retryAfterMs);
+            // Sleep before trying again (minimum 100ms)
+            setTimeout(resolve, Math.max(100, args.pollArgs.retryAfterMs));
         });
     }
 
