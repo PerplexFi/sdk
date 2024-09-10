@@ -1,35 +1,244 @@
-import { createDataItemSigner, message } from '@permaweb/aoconnect';
+import { createDataItemSigner, dryrun, message } from '@permaweb/aoconnect';
 import { z } from 'zod';
 
-import { lookForMessage } from '../AoMessage';
+import { AoMessage, lookForMessage } from '../AoMessage';
 import { Token, TokenQuantity } from '../Token';
-import { ArweaveIdRegex } from '../utils/arweave';
-import { OrderSide, OrderStatus, OrderType } from '../utils/order';
+import {
+    OrderSide,
+    ZodOrderSide,
+    OrderStatus,
+    ZodOrderStatus,
+    OrderType,
+    ZodOrderType,
+    ZodArweaveId,
+    ZodBint,
+} from '../utils/zod';
 import { PerpOrder } from './Order';
 import { PerpPrice } from './Price';
+import { PerpPosition } from './Position';
+import { getMarketById, getTokenById } from '../utils/token';
 
 const PerpAccountSchema = z.object({
-    id: z.string().regex(ArweaveIdRegex, 'Must be a valid AO process ID'),
+    id: ZodArweaveId,
+    tokenDenomination: z.number().int().gte(0),
+    tokenName: z.string(),
 });
 type PerpAccountConstructor = z.infer<typeof PerpAccountSchema>;
 
-export class PerpAccount {
-    public readonly id: string;
-
-    constructor(params: PerpAccountConstructor) {
-        const { id } = PerpAccountSchema.parse(params);
-
-        this.id = id;
+function emptyArrayToEmptyObject(val: unknown): unknown {
+    if (Array.isArray(val) && val.length === 0) {
+        return {};
     }
 
-    // async getSummary(wallet: string): Promise<AccountSummary> {
-    // }
+    return val;
+}
+
+const AccountSummaryResponseSchema = z.object({
+    collaterals: z.preprocess(emptyArrayToEmptyObject, z.record(z.string())),
+    positions: z.preprocess(
+        emptyArrayToEmptyObject,
+        z.record(
+            z.object({
+                size: z.string(),
+                fundingQty: z.string(),
+                entryPrice: z.string(),
+            }),
+        ),
+    ),
+    orders: z.preprocess(
+        emptyArrayToEmptyObject,
+        z.record(
+            z.preprocess(
+                emptyArrayToEmptyObject,
+                z.record(
+                    z.object({
+                        id: z.string(),
+                        from: z.string(),
+                        index: z.number().int(),
+                        originalQty: z.string(),
+                        executedQty: z.string(),
+                        executedValue: z.string(),
+                        type: ZodOrderType,
+                        status: ZodOrderStatus,
+                        side: ZodOrderSide,
+                        price: z.string(),
+                    }),
+                ),
+            ),
+        ),
+    ),
+    marginDetails: z.object({
+        totalMargin: ZodBint,
+        marginBeforeLiquidation: ZodBint,
+        marginAvailableForOrders: ZodBint,
+        requiredInitialMargin: ZodBint,
+        requiredMaintenanceMargin: ZodBint,
+        unrealizedPnL: ZodBint,
+    }),
+});
+
+type AccountSummary = {
+    collaterals: Map<string, TokenQuantity>; // Key = tokenId
+    positions: Map<string, PerpPosition>; // Key = marketId
+    orders: Map<
+        string, // Key = marketId
+        Map<string, PerpOrder> // Key = orderId
+    >;
+    marginDetails: {
+        marginAvailableForOrders: TokenQuantity; // in Account.TOKEN
+        marginBeforeLiquidation: TokenQuantity; // in Account.TOKEN
+        requiredInitialMargin: TokenQuantity; // in Account.TOKEN
+        requiredMaintenanceMargin: TokenQuantity; // in Account.TOKEN
+        totalMargin: TokenQuantity; // in Account.TOKEN
+        unrealizedPnL: TokenQuantity; // in Account.TOKEN
+    };
+};
+
+export class PerpAccount {
+    #summaries: Map<string, { fetchedAt: Date; summary: AccountSummary }>;
+    public readonly id: string;
+    public readonly token: Token;
+
+    constructor(params: PerpAccountConstructor) {
+        const { id, tokenDenomination, tokenName } = PerpAccountSchema.parse(params);
+
+        this.id = id;
+        this.token = new Token(
+            {
+                id,
+                name: tokenName,
+                ticker: tokenName,
+                denomination: tokenDenomination,
+            },
+            false,
+        );
+        this.#summaries = new Map();
+    }
+
+    async getSummary(wallet: string): Promise<AccountSummary> {
+        const existingSummary = this.#summaries.get(wallet);
+        if (existingSummary && Date.now() - existingSummary.fetchedAt.getTime() <= 60_000) {
+            // Prevent updating the summary too often
+            return existingSummary.summary;
+        }
+
+        const res = await dryrun({
+            process: this.id,
+            tags: AoMessage.makeTags({
+                Action: 'Account-Summary',
+                Target: wallet,
+            }),
+        });
+
+        const data = res.Messages.at(0)?.Data;
+        if (!data) {
+            throw new Error('An error occured while fetching the account summary');
+        }
+
+        const summaryResponse = AccountSummaryResponseSchema.parse(JSON.parse(data));
+        const summary: AccountSummary = {
+            collaterals: new Map(
+                Object.entries(summaryResponse.collaterals).map(([tokenId, quantity]) => {
+                    const token =
+                        getTokenById(tokenId) ??
+                        new Token({
+                            id: tokenId,
+                            name: '_UNKNOWN_TOKEN_',
+                            ticker: '???',
+                            denomination: 0,
+                        });
+
+                    return [
+                        tokenId,
+                        new TokenQuantity({
+                            token,
+                            quantity: BigInt(quantity),
+                        }),
+                    ];
+                }),
+            ),
+            positions: new Map(
+                Object.entries(summaryResponse.positions).map(([marketId, positionData]) => {
+                    const market = getMarketById(marketId);
+                    if (!market) {
+                        throw new Error('Market not found, make sure it is available in getMarketById');
+                    }
+
+                    return [
+                        marketId,
+                        new PerpPosition({
+                            market,
+                            entryPrice: positionData.entryPrice,
+                            size: positionData.size,
+                            fundingQuantity: positionData.fundingQty,
+                        }),
+                    ];
+                }),
+            ),
+            orders: new Map(
+                Object.entries(summaryResponse.orders).map(([marketId, ordersData]) => {
+                    const market = getMarketById(marketId);
+                    if (!market) {
+                        throw new Error('Market not found, make sure it is available in getMarketById');
+                    }
+
+                    return [
+                        marketId,
+                        new Map(
+                            Object.entries(ordersData).map(([orderId, orderData]) => [
+                                orderId,
+                                new PerpOrder({
+                                    id: orderData.id,
+                                    type: orderData.type,
+                                    side: orderData.side,
+                                    status: orderData.status,
+                                    market,
+                                    originalQuantity: orderData.originalQty,
+                                    executedQuantity: orderData.executedQty,
+                                    price: orderData.price,
+                                }),
+                            ]),
+                        ),
+                    ];
+                }),
+            ),
+            marginDetails: {
+                marginAvailableForOrders: new TokenQuantity({
+                    token: this.token,
+                    quantity: BigInt(summaryResponse.marginDetails.marginAvailableForOrders),
+                }),
+                marginBeforeLiquidation: new TokenQuantity({
+                    token: this.token,
+                    quantity: BigInt(summaryResponse.marginDetails.marginBeforeLiquidation),
+                }),
+                requiredInitialMargin: new TokenQuantity({
+                    token: this.token,
+                    quantity: BigInt(summaryResponse.marginDetails.requiredInitialMargin),
+                }),
+                requiredMaintenanceMargin: new TokenQuantity({
+                    token: this.token,
+                    quantity: BigInt(summaryResponse.marginDetails.requiredMaintenanceMargin),
+                }),
+                totalMargin: new TokenQuantity({
+                    token: this.token,
+                    quantity: BigInt(summaryResponse.marginDetails.totalMargin),
+                }),
+                unrealizedPnL: new TokenQuantity({
+                    token: this.token,
+                    quantity: BigInt(summaryResponse.marginDetails.unrealizedPnL),
+                }),
+            },
+        };
+
+        this.#summaries.set(wallet, { fetchedAt: new Date(), summary }); // Save summary for later use
+
+        return summary;
+    }
 }
 
 const PerpMarketSchema = z.object({
-    id: z.string().regex(ArweaveIdRegex, 'Must be a valid AO process ID'),
+    id: ZodArweaveId,
     account: z.instanceof(PerpAccount),
-    accountDenomination: z.number().int().gte(0),
     baseTicker: z.string(),
     baseDenomination: z.number().int().gte(0),
     minPriceTickSize: z.number().int().gte(0),
@@ -46,15 +255,8 @@ export class PerpMarket {
     public readonly minQuantityTickSize: number;
 
     constructor(params: PerpMarketConstructor) {
-        const {
-            id,
-            account,
-            accountDenomination,
-            baseTicker,
-            baseDenomination,
-            minPriceTickSize,
-            minQuantityTickSize,
-        } = PerpMarketSchema.parse(params);
+        const { id, account, baseTicker, baseDenomination, minPriceTickSize, minQuantityTickSize } =
+            PerpMarketSchema.parse(params);
 
         this.id = id;
         this.account = account;
@@ -67,15 +269,7 @@ export class PerpMarket {
             },
             false,
         );
-        this.quoteToken = new Token(
-            {
-                id: account.id,
-                name: 'USD',
-                ticker: 'USD',
-                denomination: accountDenomination,
-            },
-            false,
-        );
+        this.quoteToken = account.token;
         this.minPriceTickSize = minPriceTickSize;
         this.minQuantityTickSize = minQuantityTickSize;
     }
@@ -153,9 +347,9 @@ export class PerpMarket {
                 },
             ],
             isMessageValid: (msg) => {
-                const orderStatus = msg.tags['X-Order-Status'];
+                const orderStatus = msg.tags['X-Order-Status'] as OrderStatus;
 
-                if (orderStatus === 'Filled' || orderStatus === 'Canceled') {
+                if (orderStatus === 'Filled' || orderStatus === 'Canceled' || orderStatus === 'Failed') {
                     // If order is filled
                     // Or order is refunded (because of lack of liquidity)
                     // TODO: Handle reduce-only failed?
@@ -179,7 +373,7 @@ export class PerpMarket {
             type: finalMessage.tags['X-Order-Type'] as OrderType, // casting type is not an issue because zod handles value checking
             side: finalMessage.tags['X-Order-Side'] as OrderSide, // casting type is not an issue because zod handles value checking
             status: finalMessage.tags['X-Order-Status'] as OrderStatus, // casting type is not an issue because zod handles value checking
-            token: this.baseToken,
+            market: this,
             originalQuantity: finalMessage.tags['X-Original-Quantity'],
             executedQuantity: finalMessage.tags['X-Executed-Quantity'],
         });
@@ -220,9 +414,14 @@ export class PerpMarket {
                 },
             ],
             isMessageValid: (msg) => {
-                const orderStatus = msg.tags['X-Order-Status'];
+                const orderStatus = msg.tags['X-Order-Status'] as OrderStatus;
 
-                if (msg.tags['Action'] === 'Order-Booked' || orderStatus === 'Filled' || orderStatus === 'Failed') {
+                if (
+                    msg.tags['Action'] === 'Order-Booked' ||
+                    orderStatus === 'Filled' ||
+                    orderStatus === 'Canceled' ||
+                    orderStatus === 'Failed'
+                ) {
                     // If order is booked
                     // Or order is filled
                     // Or order is failed (because of postOnly/reduceOnly making it fail)
@@ -247,9 +446,10 @@ export class PerpMarket {
             type: finalMessage.tags['X-Order-Type'] as OrderType, // casting type is not an issue because zod handles value checking
             side: finalMessage.tags['X-Order-Side'] as OrderSide, // casting type is not an issue because zod handles value checking
             status: finalMessage.tags['X-Order-Status'] as OrderStatus, // casting type is not an issue because zod handles value checking
-            token: this.baseToken,
+            market: this,
             originalQuantity: finalMessage.tags['X-Original-Quantity'],
             executedQuantity: finalMessage.tags['X-Executed-Quantity'],
+            price: finalMessage.tags['X-Order-Price'],
         });
     }
 

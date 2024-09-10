@@ -2,14 +2,14 @@ import { dryrun } from '@permaweb/aoconnect';
 import { z } from 'zod';
 
 import { AoMessage } from './AoMessage';
-import { ArweaveIdRegex } from './utils/arweave';
+import { ZodArweaveId } from './utils/zod';
 
 const TokenSchema = z.object({
-    id: z.string().regex(ArweaveIdRegex, 'Must be a valid AO process ID'),
+    id: ZodArweaveId,
     name: z.string(),
     ticker: z.string(),
     denomination: z.number().int().nonnegative(),
-    logo: z.string().regex(ArweaveIdRegex, 'Must be a valid Arweave txId').optional(),
+    logo: ZodArweaveId.optional(),
 });
 type TokenConstructor = z.infer<typeof TokenSchema>;
 

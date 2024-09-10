@@ -9,7 +9,7 @@ import {
     GetTransactionsQueryVariables,
     queryGateway,
 } from './utils/goldsky';
-import { ArweaveIdRegex } from './utils/arweave';
+import { ZodArweaveId } from './utils/zod';
 
 const AoMessageTagsSchema = z.array(
     z.object({
@@ -21,11 +21,11 @@ const AoMessageTagsSchema = z.array(
 export type AoMessageTags = z.infer<typeof AoMessageTagsSchema>;
 
 const AoMessageSchema = z.object({
-    id: z.string().regex(ArweaveIdRegex),
+    id: ZodArweaveId,
     owner: z.object({
-        address: z.string().regex(ArweaveIdRegex),
+        address: ZodArweaveId,
     }),
-    recipient: z.string().regex(ArweaveIdRegex),
+    recipient: ZodArweaveId,
     tags: AoMessageTagsSchema,
 });
 type AoMessageConstructor = z.infer<typeof AoMessageSchema>;

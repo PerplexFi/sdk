@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { AoMessage, lookForMessage } from './AoMessage';
 import { Token, TokenQuantity } from './Token';
-import { ArweaveIdRegex } from './utils/arweave';
+import { ZodArweaveId } from './utils/zod';
 
 type PoolReserves = {
     base: TokenQuantity;
@@ -13,7 +13,7 @@ type PoolReserves = {
 
 const PoolSchema = z
     .object({
-        id: z.string().regex(ArweaveIdRegex, 'Must be a valid AO process ID'),
+        id: ZodArweaveId,
         tokenBase: z.instanceof(Token),
         tokenQuote: z.instanceof(Token),
         feeRate: z.number().gte(0).lte(1),
@@ -107,6 +107,7 @@ export class Pool {
 
     async updateReserves(): Promise<void> {
         if (this.reserves.lastFetchedAt && Date.now() - this.reserves.lastFetchedAt.getTime() <= 60_000) {
+            // Prevent updating the reserves too often
             return;
         }
 
@@ -217,7 +218,7 @@ export class Pool {
 }
 
 const SwapSchema = z.object({
-    id: z.string().regex(ArweaveIdRegex, 'Must be a valid AO message ID'),
+    id: ZodArweaveId,
     input: z.instanceof(TokenQuantity),
     output: z.instanceof(TokenQuantity),
     fees: z.instanceof(TokenQuantity),

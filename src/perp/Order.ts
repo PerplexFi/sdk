@@ -1,32 +1,37 @@
 import { z } from 'zod';
 
 import { AoMessage, AoMessageTags } from '../AoMessage';
-import { Token, TokenQuantity } from '../Token';
-import { ArweaveIdRegex } from '../utils/arweave';
+import { TokenQuantity } from '../Token';
 import {
     OrderSide,
-    OrderSideZodEnum,
+    ZodOrderSide,
     OrderStatus,
-    OrderStatusZodEnum,
+    ZodOrderStatus,
     OrderType,
-    OrderTypeZodEnum,
-} from '../utils/order';
+    ZodOrderType,
+    ZodBint,
+    ZodArweaveId,
+} from '../utils/zod';
+import { PerpMarket } from './Market';
 import { PerpPrice } from './Price';
 
-const PerpOrderSchema = z.object({
-    id: z.string().regex(ArweaveIdRegex, 'Must be a valid AO message ID'),
-    type: OrderTypeZodEnum,
-    side: OrderSideZodEnum,
-    status: OrderStatusZodEnum,
-    token: z.instanceof(Token),
-    originalQuantity: z.string().regex(/^\d+$/),
-    executedQuantity: z.string().regex(/^\d+$/),
-});
+const PerpOrderSchema = z
+    .object({
+        id: ZodArweaveId,
+        type: ZodOrderType,
+        side: ZodOrderSide,
+        status: ZodOrderStatus,
+        market: z.instanceof(PerpMarket),
+        originalQuantity: ZodBint,
+        executedQuantity: ZodBint,
+        price: ZodBint.optional(),
+    })
+    .refine((params) => (params.type !== 'Market' && !params.price ? false : true)); // Make sure price is set if order.type is not Market
 type PerpOrderConstructor = z.infer<typeof PerpOrderSchema>;
 
 const PerpOrderMarketCreateTagsSchema = z.object({
-    marketId: z.string().regex(ArweaveIdRegex),
-    side: OrderSideZodEnum,
+    marketId: ZodArweaveId,
+    side: ZodOrderSide,
     size: z.instanceof(TokenQuantity),
     reduceOnly: z.boolean().optional(),
 });
@@ -35,8 +40,8 @@ export type PerpOrderMarketCreateTagsParams = z.infer<typeof PerpOrderMarketCrea
 
 const PerpOrderLimitCreateTagsSchema = z
     .object({
-        marketId: z.string().regex(ArweaveIdRegex),
-        side: OrderSideZodEnum,
+        marketId: ZodArweaveId,
+        side: ZodOrderSide,
         size: z.instanceof(TokenQuantity),
         price: z.instanceof(PerpPrice),
         postOnly: z.boolean().optional(),
@@ -52,22 +57,31 @@ export class PerpOrder {
     public readonly status: OrderStatus;
     public readonly originalQuantity: TokenQuantity;
     public readonly executedQuantity: TokenQuantity;
+    public readonly price?: PerpPrice;
 
     constructor(params: PerpOrderConstructor) {
-        const { id, type, side, status, token, originalQuantity, executedQuantity } = PerpOrderSchema.parse(params);
+        const { id, type, side, status, market, originalQuantity, executedQuantity, price } =
+            PerpOrderSchema.parse(params);
 
         this.id = id;
         this.type = type;
         this.side = side;
         this.status = status;
         this.originalQuantity = new TokenQuantity({
-            token,
+            token: market.baseToken,
             quantity: BigInt(originalQuantity),
         });
         this.executedQuantity = new TokenQuantity({
-            token,
+            token: market.baseToken,
             quantity: BigInt(executedQuantity),
         });
+
+        if (price) {
+            this.price = new PerpPrice({
+                market,
+                value: BigInt(price),
+            });
+        }
     }
 
     static forgeCreateMarketTags(params: PerpOrderMarketCreateTagsParams): AoMessageTags {
