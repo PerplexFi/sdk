@@ -1,7 +1,7 @@
-import { PerpAccount, PerpMarket } from '../perp/Market';
+import { PerpAccount, PerpMarket } from '../Perp';
 
 const account = new PerpAccount({
-    id: 'perp_account_id',
+    id: 'PaYijAXMDe4MhFBCJLHM-7uVOg6URFswqBv-JKUcM3k', // TODO: SET REAL VALUE
     tokenName: 'USD',
     tokenDenomination: 12,
 });
@@ -16,11 +16,11 @@ export const Market = {
         minQuantityTickSize: 3, // ???
     }),
     ETH: new PerpMarket({
-        id: 'eth_perp_market_id_000000000000000000000000', // TODO: SET REAL VALUES
+        id: 'RE6V73EGExHhMMERTkv-ufJfWle0GOGKILhJf3VSMEg', // TODO: SET REAL VALUES
         account,
-        baseDenomination: 18,
+        baseDenomination: 12,
         baseTicker: 'ETH',
-        minPriceTickSize: 3, // ???
-        minQuantityTickSize: 3, // ???
+        minPriceTickSize: 10, // ???
+        minQuantityTickSize: 8, // ???
     }),
 } as const;

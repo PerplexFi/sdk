@@ -1,7 +1,8 @@
 import { Tokens } from '../constants/Aetheris';
 import { Market } from '../constants/Perp';
-import { PerpMarket } from '../perp/Market';
-import { Token } from '../Token';
+
+import type { PerpMarket } from '../Perp';
+import type { Token } from '../Token';
 
 export function getTokenById(tokenId: string): Token | null {
     switch (tokenId) {
