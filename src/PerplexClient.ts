@@ -2,9 +2,22 @@ import { createDataItemSigner, dryrun, message } from '@permaweb/aoconnect';
 import { z } from 'zod';
 
 import { lookForMessage, makeArweaveTxTags } from './AoMessage';
-import { Pool, PoolReserves, Swap, SwapParams, SwapParamsSchema, Token } from './types';
-import { fetchAllPools, fetchAllTokens } from './utils/perplexApi';
+import {
+    PerpMarket,
+    PerpOrder,
+    PerpOrderSchema,
+    PlacePerpOrderParams,
+    PlacePerpOrderParamsSchema,
+    Pool,
+    PoolReserves,
+    Swap,
+    SwapParams,
+    SwapParamsSchema,
+    Token,
+} from './types';
+import { fetchAllPerpMarkets, fetchAllPools, fetchAllTokens } from './utils/perplexApi';
 import { getPoolOppositeToken } from './utils/pool';
+import { OrderType } from './utils/zod';
 
 const PerplexClientConfigSchema = z.object({
     apiUrl: z.string().url(),
@@ -23,6 +36,8 @@ export class PerplexClient {
     #cachedTokensByTicker: Map<string, string>;
     #cachedPools: Map<string, Pool>;
     #cachedPoolsByTicker: Map<string, string>;
+    #cachedPerpMarkets: Map<string, PerpMarket>;
+    #cachedPerpMarketsByTicker: Map<string, string>;
     #poolReserves: Map<string, PoolReserves>;
     #poolReservesLastFetchedAt: Map<string, Date>;
 
@@ -33,6 +48,8 @@ export class PerplexClient {
         this.#cachedTokensByTicker = new Map();
         this.#cachedPools = new Map();
         this.#cachedPoolsByTicker = new Map();
+        this.#cachedPerpMarkets = new Map();
+        this.#cachedPerpMarketsByTicker = new Map();
         this.#poolReserves = new Map();
         this.#poolReservesLastFetchedAt = new Map();
     }
@@ -48,6 +65,13 @@ export class PerplexClient {
         pools.forEach((pool) => {
             this.#cachedPools.set(pool.id, pool);
             this.#cachedPoolsByTicker.set(`${pool.tokenBase.ticker}/${pool.tokenQuote.ticker}`, pool.id);
+            this.#cachedPoolsByTicker.set(`${pool.tokenQuote.ticker}/${pool.tokenBase.ticker}`, pool.id);
+        });
+
+        const perpMarkets = await fetchAllPerpMarkets(this.config.apiUrl);
+        perpMarkets.forEach((perpMarket) => {
+            this.#cachedPerpMarkets.set(perpMarket.id, perpMarket);
+            this.#cachedPerpMarketsByTicker.set(`${perpMarket.baseTicker}/USD`, perpMarket.id);
         });
     }
 
@@ -105,6 +129,8 @@ export class PerplexClient {
             // Can happen if the slippage was too big. Confirm by querying aoconnect's `result` and check the Output/Messages?
             throw new Error(`Swap has failed. More infos: https://ao.link/#/message/${transferId}`);
         }
+
+        // TODO: Update reserves with quantityIn/quantityOut?
 
         return {
             id: transferId,
@@ -186,12 +212,83 @@ export class PerplexClient {
         return (outputAfterFee * (10_000n - BigInt(Math.round(slippageTolerance * 10_000)))) / 10_000n;
     }
 
-    // async placePerpOrder(
-    //     params: PlacePerpOrderParams,
-    //     signer: ReturnType<typeof createDataItemSigner>,
-    // ): Promise<PerpOrder> {
-    //     //
-    // }
+    async placePerpOrder(
+        params: PlacePerpOrderParams,
+        signer: ReturnType<typeof createDataItemSigner>,
+    ): Promise<PerpOrder> {
+        const parsedParams = PlacePerpOrderParamsSchema.parse(params);
+        const { market, type, side, size, reduceOnly } = parsedParams;
+
+        let transferId: string;
+        if (type === OrderType.MARKET) {
+            transferId = await message({
+                signer,
+                process: market.accountId,
+                tags: makeArweaveTxTags({
+                    Action: 'Place-Order',
+                    Quantity: '0',
+                    Recipient: market.id,
+                    'X-Order-Type': type,
+                    'X-Order-Side': side,
+                    'X-Order-Size': size,
+                    'X-Reduce-Only': reduceOnly,
+                }),
+            });
+        } else {
+            transferId = await message({
+                signer,
+                process: market.accountId,
+                tags: makeArweaveTxTags({
+                    Action: 'Place-Order',
+                    Quantity: '0',
+                    Recipient: market.id,
+                    'X-Order-Type': type,
+                    'X-Order-Side': side,
+                    'X-Order-Size': size,
+                    'X-Order-Price': parsedParams.price,
+                    'X-Reduce-Only': reduceOnly,
+                }),
+            });
+        }
+
+        const takerOrderMsg = await lookForMessage({
+            tagsFilter: [
+                {
+                    name: 'X-Order-Id',
+                    values: [transferId],
+                },
+                {
+                    name: 'X-Is-Taker',
+                    values: ['true'],
+                },
+                {
+                    name: 'From-Process',
+                    values: [market.id],
+                },
+            ],
+            isMessageValid: (msg) => !!msg,
+            pollArgs: {
+                maxRetries: 40,
+                retryAfterMs: 500, // 40*500ms = 20s
+            },
+        });
+
+        if (!takerOrderMsg) {
+            throw new Error(`Place-Order has failed. More infos: https://ao.link/#/message/${transferId}`);
+        }
+
+        return PerpOrderSchema.parse({
+            id: transferId,
+            type: takerOrderMsg.tags['X-Order-Type'],
+            status: takerOrderMsg.tags['X-Order-Status'],
+            side: takerOrderMsg.tags['X-Order-Side'],
+            size: BigInt(takerOrderMsg.tags['X-Order-Size']),
+            originalQuantity: BigInt(takerOrderMsg.tags['X-Original-Quantity']),
+            executedQuantity: BigInt(takerOrderMsg.tags['X-Executed-Quantity']),
+            initialPrice: BigInt(takerOrderMsg.tags['X-Order-Price']),
+            executedValue: BigInt(takerOrderMsg.tags['X-Executed-Value']),
+        });
+    }
 
     getTokenById(tokenId: string): Token {
         const cachedToken = this.#cachedTokens.get(tokenId);
@@ -233,5 +330,26 @@ export class PerplexClient {
 
         // If nothing is found, throw an error
         throw new Error('Pool not found');
+    }
+
+    getPerpMarketById(perpMarketId: string): PerpMarket {
+        const cachedPerpMarket = this.#cachedPerpMarkets.get(perpMarketId);
+        if (cachedPerpMarket) {
+            return cachedPerpMarket;
+        }
+
+        // If nothing is found, throw an error
+        throw new Error('PerpMarket not found');
+    }
+
+    getPerpMarket(perpMarketTicker: string): PerpMarket {
+        const perpMarketId = this.#cachedPerpMarketsByTicker.get(perpMarketTicker);
+        const cachedPerpMarket = perpMarketId ? this.#cachedPerpMarkets.get(perpMarketId) : undefined;
+        if (cachedPerpMarket) {
+            return cachedPerpMarket;
+        }
+
+        // If nothing is found, throw an error
+        throw new Error('PerpMarket not found');
     }
 }

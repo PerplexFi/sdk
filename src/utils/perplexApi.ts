@@ -157,6 +157,7 @@ export async function fetchAllPerpMarkets(perplexApiUrl: string): Promise<PerpMa
     return markets.map((market) => ({
         id: market.id,
         accountId: market.quote.id,
+        baseTicker: market.base.ticker,
         minPriceTickSize: decimalToBigInt(market.minPriceTickSize, market.quote.denomination),
         minQuantityTickSize: decimalToBigInt(market.minQuantityTickSize, market.base.denomination),
     }));
