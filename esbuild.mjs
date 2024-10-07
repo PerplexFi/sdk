@@ -10,7 +10,7 @@ await esbuild.build({
     format: 'cjs',
     external: Object.keys(packageJson.dependencies),
     bundle: true,
-    minify: true,
+    // minify: true,
     keepNames: true,
     outfile: packageJson.exports['.'].require,
 });
@@ -20,7 +20,7 @@ await esbuild.build({
     entryPoints: ['src/index.ts'],
     platform: 'node',
     format: 'esm',
-    minify: true,
+    // minify: true,
     keepNames: true,
     external: Object.keys(packageJson.dependencies),
     bundle: true,

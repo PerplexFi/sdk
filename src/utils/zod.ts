@@ -1,14 +1,14 @@
 import { z } from 'zod';
 
-export const ZodOrderSide = z.enum(['Buy', 'Sell'] as const);
+export const ZodOrderSide = z.enum(['Buy', 'Sell']);
 
 export type OrderSide = z.infer<typeof ZodOrderSide>;
 
-export const ZodOrderStatus = z.enum(['New', 'Partially-Filled', 'Filled', 'Canceled', 'Failed'] as const);
+export const ZodOrderStatus = z.enum(['New', 'Partially-Filled', 'Filled', 'Canceled', 'Failed']);
 
 export type OrderStatus = z.infer<typeof ZodOrderStatus>;
 
-export const ZodOrderType = z.enum(['Market', 'Limit', 'Limit-Maker'] as const);
+export const ZodOrderType = z.enum(['Market', 'Limit', 'Limit-Maker']);
 
 export type OrderType = z.infer<typeof ZodOrderType>;
 

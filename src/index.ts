@@ -1,4 +1,3 @@
-// SDK entrypoint
-export * as Aetheris from './constants/Aetheris';
+export { PerplexClient } from './PerplexClient';
 
-export * as Perp from './constants/Perp';
+export * from './utils/numbers';
