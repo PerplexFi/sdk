@@ -24,7 +24,7 @@ export type Pool = z.infer<typeof PoolSchema>;
 export type PoolReserves = Record<string, bigint>;
 
 export const SwapParamsSchema = z.object({
-    pool: PoolSchema,
+    poolId: ZodArweaveId,
     token: TokenSchema,
     quantity: z.bigint().positive(),
     minExpectedOutput: z.bigint().positive(),
@@ -46,41 +46,44 @@ export const PerpMarketSchema = z.object({
     id: z.string(),
     accountId: z.string(),
     baseTicker: z.string(),
+    baseDenomination: z.number().int().positive(),
     minPriceTickSize: z.bigint(),
     minQuantityTickSize: z.bigint(),
+    oraclePrice: z.bigint(),
 });
 
 export type PerpMarket = z.infer<typeof PerpMarketSchema>;
 
-export const PlacePerpOrderParamsSchema = z
-    .discriminatedUnion('type', [
-        z.object({
-            market: PerpMarketSchema,
-            type: z.literal(OrderType.MARKET),
-            side: ZodOrderSide,
-            size: z.bigint().positive(),
-            reduceOnly: z.boolean().optional(),
-        }),
-        z.object({
-            market: PerpMarketSchema,
-            type: z.literal(OrderType.LIMIT).or(z.literal(OrderType.LIMIT_MAKER)),
-            side: ZodOrderSide,
-            size: z.bigint().positive(),
-            price: z.bigint().positive(),
-            reduceOnly: z.boolean().optional(),
-        }),
-    ])
-    .refine((params) => params.type !== OrderType.MARKET && params.price % params.market.minPriceTickSize === 0n, {
-        message: 'Invalid price tick size',
-    })
-    .refine((params) => params.size % params.market.minQuantityTickSize === 0n, {
-        message: 'Invalid quantity tick size',
-    });
+export const PlacePerpOrderParamsSchema = z.discriminatedUnion('type', [
+    z.object({
+        marketId: ZodArweaveId,
+        type: z.literal(OrderType.MARKET),
+        side: ZodOrderSide,
+        size: z.bigint().positive(),
+        reduceOnly: z.boolean().optional(),
+    }),
+    z.object({
+        marketId: ZodArweaveId,
+        type: z.literal(OrderType.LIMIT),
+        side: ZodOrderSide,
+        size: z.bigint().positive(),
+        price: z.bigint().positive(),
+        reduceOnly: z.boolean().optional(),
+    }),
+    z.object({
+        marketId: ZodArweaveId,
+        type: z.literal(OrderType.LIMIT_MAKER),
+        side: ZodOrderSide,
+        size: z.bigint().positive(),
+        price: z.bigint().positive(),
+        reduceOnly: z.boolean().optional(),
+    }),
+]);
 
 export type PlacePerpOrderParams = z.infer<typeof PlacePerpOrderParamsSchema>;
 
 export const CancelOrderParamsSchema = z.object({
-    market: PerpMarketSchema,
+    marketId: ZodArweaveId,
     orderId: ZodArweaveId,
 });
 

@@ -20,3 +20,7 @@ export function bigIntToDecimal(value: bigint, denomination: number): string {
 
     return decPart ? `${intPart}.${decPart}` : intPart;
 }
+
+export function roundToTick(value: bigint, tickSize: bigint): bigint {
+    return ((value + tickSize / 2n) / tickSize) * tickSize;
+}

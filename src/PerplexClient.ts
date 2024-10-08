@@ -1,7 +1,7 @@
 import { createDataItemSigner, dryrun, message, result } from '@permaweb/aoconnect';
 import { z } from 'zod';
 
-import { ArweaveTxTag, lookForMessage, makeArweaveTxTags } from './AoMessage';
+import { AoConnectMessage, lookForMessage, makeArweaveTxTags } from './AoMessage';
 import {
     CancelOrderParams,
     CancelOrderParamsSchema,
@@ -17,9 +17,11 @@ import {
     SwapParamsSchema,
     Token,
 } from './types';
+import { OrderBookDataSchema } from './utils/orderbook';
 import { fetchAllPerpMarkets, fetchAllPools, fetchAllTokens } from './utils/perplexApi';
 import { getPoolOppositeToken } from './utils/pool';
 import { OrderSide, OrderStatus, OrderType } from './utils/zod';
+import { bigIntToDecimal } from './utils/numbers';
 
 const PerplexClientConfigSchema = z.object({
     apiUrl: z.string().url(),
@@ -79,7 +81,8 @@ export class PerplexClient {
     }
 
     async swap(params: SwapParams, signer: ReturnType<typeof createDataItemSigner>): Promise<Swap> {
-        const { pool, quantity, token, minExpectedOutput } = SwapParamsSchema.parse(params);
+        const { poolId, quantity, token, minExpectedOutput } = SwapParamsSchema.parse(params);
+        const pool = this.getPoolById(poolId);
 
         // 1. Check quantityIn.token is one of the pool's token
         if (token.id !== pool.tokenBase.id && token.id !== pool.tokenQuote.id) {
@@ -103,18 +106,9 @@ export class PerplexClient {
         // 2. Poll gateway to find the resulting message
         const confirmationMessage = await lookForMessage({
             tagsFilter: [
-                {
-                    name: 'Action',
-                    values: ['Transfer'],
-                },
-                {
-                    name: 'From-Process',
-                    values: [pool.id],
-                },
-                {
-                    name: 'Pushed-For',
-                    values: [transferId],
-                },
+                ['Action', ['Transfer']],
+                ['From-Process', [pool.id]],
+                ['Pushed-For', [transferId]],
             ],
             isMessageValid: (msg) => !!msg, // Message just has to exist to be valid
             pollArgs: {
@@ -215,12 +209,47 @@ export class PerplexClient {
         return (outputAfterFee * (10_000n - BigInt(Math.round(slippageTolerance * 10_000)))) / 10_000n;
     }
 
+    async getPerpPrices(marketId: string): Promise<{ oracle: bigint; bestBid: bigint; bestAsk: bigint }> {
+        const perpMarket = this.#cachedPerpMarkets.get(marketId);
+        if (!perpMarket) {
+            throw new Error('marketId does not exist');
+        }
+
+        const orderBookRes = await dryrun({
+            process: marketId,
+            tags: makeArweaveTxTags({
+                Action: 'Get-Order-Book',
+            }),
+        });
+
+        const orderBook = OrderBookDataSchema.parse(
+            JSON.parse(
+                (orderBookRes.Messages as AoConnectMessage[]).find((msg) =>
+                    msg.Tags.some(({ name, value }) => name === 'Action' && value === 'Get-Order-Book-Response'),
+                )?.Data ?? '{}',
+            ),
+        );
+
+        return {
+            oracle: perpMarket.oraclePrice,
+            bestBid: orderBook.Bids.reduce((bestBid, bid) => (bid.price < bestBid.price ? bestBid : bid)).price,
+            bestAsk: orderBook.Asks.reduce((bestAsk, ask) => (ask.price > bestAsk.price ? bestAsk : ask)).price,
+        };
+    }
+
     async placePerpOrder(
         params: PlacePerpOrderParams,
         signer: ReturnType<typeof createDataItemSigner>,
     ): Promise<PerpOrder> {
         const parsedParams = PlacePerpOrderParamsSchema.parse(params);
-        const { market, type, side, size, reduceOnly } = parsedParams;
+        const { marketId, type, side, size, reduceOnly } = parsedParams;
+        const market = this.getPerpMarketById(marketId);
+
+        if (size % market.minQuantityTickSize !== 0n) {
+            throw new Error(
+                `Invalid orderSize, must be a multiple of ${bigIntToDecimal(market.minQuantityTickSize, market.baseDenomination)}`,
+            );
+        }
 
         let transferId: string;
         if (type === OrderType.MARKET) {
@@ -238,6 +267,12 @@ export class PerplexClient {
                 }),
             });
         } else {
+            if (parsedParams.price % market.minPriceTickSize !== 0n) {
+                throw new Error(
+                    `Invalid orderPrice, must be a multiple of ${bigIntToDecimal(market.minPriceTickSize, market.baseDenomination)}`,
+                );
+            }
+
             transferId = await message({
                 signer,
                 process: market.accountId,
@@ -256,18 +291,9 @@ export class PerplexClient {
 
         const takerOrderMsg = await lookForMessage({
             tagsFilter: [
-                {
-                    name: 'X-Order-Id',
-                    values: [transferId],
-                },
-                {
-                    name: 'X-Is-Taker',
-                    values: ['true'],
-                },
-                {
-                    name: 'From-Process',
-                    values: [market.id],
-                },
+                ['X-Order-Id', [transferId]],
+                ['X-Is-Taker', [true]],
+                ['From-Process', [market.id]],
             ],
             isMessageValid: (msg) => !!msg,
             pollArgs: {
@@ -294,7 +320,8 @@ export class PerplexClient {
     }
 
     async cancelOrder(params: CancelOrderParams, signer: ReturnType<typeof createDataItemSigner>): Promise<PerpOrder> {
-        const { market, orderId } = CancelOrderParamsSchema.parse(params);
+        const { marketId, orderId } = CancelOrderParamsSchema.parse(params);
+        const market = this.getPerpMarketById(marketId);
 
         const messageId = await message({
             process: market.id,
@@ -310,15 +337,16 @@ export class PerplexClient {
             process: market.id,
         });
 
-        const orderMessage = res.Messages.find((msg) =>
-            msg.Tags.some((tag: ArweaveTxTag) => tag.name === 'X-Order-Status' && tag.value === 'Canceled'),
+        const orderMessage = (res.Messages as AoConnectMessage[]).find((msg) =>
+            msg.Tags.some((tag) => tag.name === 'X-Order-Status' && tag.value === 'Canceled'),
         );
-        const tags = Object.fromEntries<string>(
-            orderMessage.Tags.map(({ name, value }: ArweaveTxTag) => [name, value]),
-        );
+        if (!orderMessage) {
+            // TODO: Handle error
+            //       eg. Cancel an order that's not yours / Cancel an ID that does not exist
+            throw new Error("Couldn't cancel order");
+        }
 
-        // TODO: Handle error
-        //       eg. Cancel an order that's not yours / Cancel an ID that does not exist
+        const tags = Object.fromEntries(orderMessage.Tags.map(({ name, value }) => [name, value]));
 
         return PerpOrderSchema.parse({
             id: tags['X-Order-Id'],
@@ -331,6 +359,15 @@ export class PerplexClient {
             executedValue: BigInt(tags['X-Executed-Value']),
         });
     }
+
+    // async depositCollateral(
+    //     params: DepositCollateralParams,
+    //     signer: ReturnType<typeof createDataItemSigner>,
+    // ): Promise<void> {
+    //     // Transfer token to account
+    //     // Look for Collateral-Added
+    //     // Or Error (eg. not enough funds, maxCollateral limit reached, ...)
+    // }
 
     getTokenById(tokenId: string): Token {
         const cachedToken = this.#cachedTokens.get(tokenId);

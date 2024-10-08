@@ -11,6 +11,16 @@ const ArweaveTxTagSchema = z.object({
 
 export type ArweaveTxTag = z.infer<typeof ArweaveTxTagSchema>;
 
+export type AoConnectMessage = {
+    Tags: {
+        name: string;
+        value: string;
+    }[];
+    Data?: string;
+    Target: string;
+    Anchor: string;
+};
+
 const ArweaveTxSchema = z.object({
     id: ZodArweaveId,
     owner: z.object({
@@ -56,7 +66,8 @@ export function makeArweaveTxTags(tags: Record<string, unknown>): ArweaveTxTag[]
  * If more are found only the first message is returned.
  */
 export async function lookForMessage(args: {
-    tagsFilter: Array<{ name: string; values: string[] }>;
+    // tagsFilter: Array<{ name: string; values: string[] }>;
+    tagsFilter: Array<[string, unknown[]]>;
     isMessageValid: (msg: AoMessage) => boolean;
     pollArgs: { gatewayUrl: string; retryAfterMs: number; maxRetries: number };
 }): Promise<AoMessage | null> {
@@ -68,7 +79,12 @@ export async function lookForMessage(args: {
             args.pollArgs.gatewayUrl,
             GetTransactionsQuery,
             {
-                tagsFilter: args.tagsFilter,
+                tagsFilter: args.tagsFilter
+                    .map(([name, values]) => ({
+                        name,
+                        values: values.filter((val) => val !== null && val !== undefined).map((val) => `${val}`),
+                    }))
+                    .filter(({ values }) => values.length > 0),
                 min,
             },
         );

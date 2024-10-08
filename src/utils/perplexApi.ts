@@ -118,6 +118,7 @@ const GetPerpMarketsQuery = gql(`
                 minQuantityTickSize
                 makerFeeRate
                 takerFeeRate
+                oraclePrice
                 base {
                     ticker
                     denomination
@@ -139,6 +140,7 @@ type GetPerpMarketsQueryData = {
         minQuantityTickSize: string;
         makerFeeRate: string;
         takerFeeRate: string;
+        oraclePrice: string;
         base: {
             ticker: string;
             denomination: number;
@@ -158,7 +160,9 @@ export async function fetchAllPerpMarkets(perplexApiUrl: string): Promise<PerpMa
         id: market.id,
         accountId: market.quote.id,
         baseTicker: market.base.ticker,
+        baseDenomination: market.base.denomination,
         minPriceTickSize: decimalToBigInt(market.minPriceTickSize, market.quote.denomination),
         minQuantityTickSize: decimalToBigInt(market.minQuantityTickSize, market.base.denomination),
+        oraclePrice: BigInt(market.oraclePrice),
     }));
 }

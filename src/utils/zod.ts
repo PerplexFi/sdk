@@ -34,3 +34,39 @@ export type OrderType = z.infer<typeof ZodOrderType>;
 export const ZodArweaveId = z.string().regex(/^[a-zA-Z0-9_-]{43}$/);
 
 export const ZodBint = z.string().regex(/^\d+$/);
+
+export const ZodRawBint = z
+    .array(z.number().int())
+    .min(2)
+    .transform((bint: number[]) => {
+        const base = 2n ** 32n;
+
+        // Check if the number is negative
+        const isNegative = (bint.at(-1)! & (1 << 31)) !== 0;
+
+        let bigint = BigInt(0);
+
+        if (isNegative) {
+            // Convert from two's complement to positive BigInt
+            let carry = BigInt(1);
+            for (let i = 0; i < bint.length; i += 1) {
+                let part = BigInt(~bint[i]!) + carry;
+                if (part >= base) {
+                    part -= base;
+                    carry = BigInt(1);
+                } else {
+                    carry = BigInt(0);
+                }
+                bigint += part * base ** BigInt(i);
+            }
+            // Negate the result to get the correct negative number
+            bigint = -bigint;
+        } else {
+            // Combine the array elements into a single large number for positive values
+            for (let i = bint.length - 1; i >= 0; i -= 1) {
+                bigint = bigint * base + BigInt(bint[i]!);
+            }
+        }
+
+        return bigint;
+    });
