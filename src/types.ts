@@ -79,12 +79,18 @@ export const PlacePerpOrderParamsSchema = z
 
 export type PlacePerpOrderParams = z.infer<typeof PlacePerpOrderParamsSchema>;
 
+export const CancelOrderParamsSchema = z.object({
+    market: PerpMarketSchema,
+    orderId: ZodArweaveId,
+});
+
+export type CancelOrderParams = z.infer<typeof CancelOrderParamsSchema>;
+
 export const PerpOrderSchema = z.object({
     id: z.string(),
     type: ZodOrderType,
     status: ZodOrderStatus,
     side: ZodOrderSide,
-    size: z.bigint(),
     originalQuantity: z.bigint(),
     executedQuantity: z.bigint(),
     initialPrice: z.bigint().optional(),

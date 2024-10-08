@@ -4,14 +4,12 @@ import { GetTransactionsQuery, GetTransactionsQueryData, GetTransactionsQueryVar
 import { queryGraphQL } from './utils/graphql';
 import { ZodArweaveId } from './utils/zod';
 
-const ArweaveTxTagsSchema = z.array(
-    z.object({
-        name: z.string(),
-        value: z.string(),
-    }),
-);
+const ArweaveTxTagSchema = z.object({
+    name: z.string(),
+    value: z.string(),
+});
 
-export type ArweaveTxTags = z.infer<typeof ArweaveTxTagsSchema>;
+export type ArweaveTxTag = z.infer<typeof ArweaveTxTagSchema>;
 
 const ArweaveTxSchema = z.object({
     id: ZodArweaveId,
@@ -19,7 +17,7 @@ const ArweaveTxSchema = z.object({
         address: ZodArweaveId,
     }),
     recipient: ZodArweaveId,
-    tags: ArweaveTxTagsSchema,
+    tags: z.array(ArweaveTxTagSchema),
 });
 type ArweaveTx = z.infer<typeof ArweaveTxSchema>;
 
@@ -41,7 +39,7 @@ export function arweaveTxToAoMessage(transaction: ArweaveTx): AoMessage {
     };
 }
 
-export function makeArweaveTxTags(tags: Record<string, unknown>): ArweaveTxTags {
+export function makeArweaveTxTags(tags: Record<string, unknown>): ArweaveTxTag[] {
     return (
         Object.entries(tags)
             // Filter out tags with null/undefined value
@@ -60,14 +58,14 @@ export function makeArweaveTxTags(tags: Record<string, unknown>): ArweaveTxTags 
 export async function lookForMessage(args: {
     tagsFilter: Array<{ name: string; values: string[] }>;
     isMessageValid: (msg: AoMessage) => boolean;
-    pollArgs: { retryAfterMs: number; maxRetries: number };
+    pollArgs: { gatewayUrl: string; retryAfterMs: number; maxRetries: number };
 }): Promise<AoMessage | null> {
     let min = Math.floor(Date.now() / 1000);
 
     for (let retryCount = 0; retryCount < args.pollArgs.maxRetries; retryCount += 1) {
         // 1. fetch
         const data = await queryGraphQL<GetTransactionsQueryData, GetTransactionsQueryVariables>(
-            'https://arweave-search.goldsky.com/graphql',
+            args.pollArgs.gatewayUrl,
             GetTransactionsQuery,
             {
                 tagsFilter: args.tagsFilter,

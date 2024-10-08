@@ -1,8 +1,10 @@
-import { createDataItemSigner, dryrun, message } from '@permaweb/aoconnect';
+import { createDataItemSigner, dryrun, message, result } from '@permaweb/aoconnect';
 import { z } from 'zod';
 
-import { lookForMessage, makeArweaveTxTags } from './AoMessage';
+import { ArweaveTxTag, lookForMessage, makeArweaveTxTags } from './AoMessage';
 import {
+    CancelOrderParams,
+    CancelOrderParamsSchema,
     PerpMarket,
     PerpOrder,
     PerpOrderSchema,
@@ -17,10 +19,11 @@ import {
 } from './types';
 import { fetchAllPerpMarkets, fetchAllPools, fetchAllTokens } from './utils/perplexApi';
 import { getPoolOppositeToken } from './utils/pool';
-import { OrderType } from './utils/zod';
+import { OrderSide, OrderStatus, OrderType } from './utils/zod';
 
 const PerplexClientConfigSchema = z.object({
     apiUrl: z.string().url(),
+    gatewayUrl: z.string().url(),
     amm: z.object({
         reservesCacheTTL: z.number(), // In milliseconds
     }),
@@ -95,7 +98,7 @@ export class PerplexClient {
             }),
         });
 
-        // TODO: Check Initial transfer did not fail (due to insufficient amount in wallet?)
+        // TODO: Check Initial transfer did not fail (eg. due to insufficient amount in wallet?)
 
         // 2. Poll gateway to find the resulting message
         const confirmationMessage = await lookForMessage({
@@ -115,6 +118,7 @@ export class PerplexClient {
             ],
             isMessageValid: (msg) => !!msg, // Message just has to exist to be valid
             pollArgs: {
+                gatewayUrl: this.config.gatewayUrl,
                 maxRetries: 40,
                 retryAfterMs: 500, // 40*500ms = 20s
             },
@@ -184,7 +188,6 @@ export class PerplexClient {
         }
 
         const reserves = this.#poolReserves.get(pool.id);
-        // TODO: Make sure reserves are the most up to date possible?
         if (!reserves) {
             throw new Error('Reserves not fetched yet');
         }
@@ -268,6 +271,7 @@ export class PerplexClient {
             ],
             isMessageValid: (msg) => !!msg,
             pollArgs: {
+                gatewayUrl: this.config.gatewayUrl,
                 maxRetries: 40,
                 retryAfterMs: 500, // 40*500ms = 20s
             },
@@ -282,11 +286,49 @@ export class PerplexClient {
             type: takerOrderMsg.tags['X-Order-Type'],
             status: takerOrderMsg.tags['X-Order-Status'],
             side: takerOrderMsg.tags['X-Order-Side'],
-            size: BigInt(takerOrderMsg.tags['X-Order-Size']),
             originalQuantity: BigInt(takerOrderMsg.tags['X-Original-Quantity']),
             executedQuantity: BigInt(takerOrderMsg.tags['X-Executed-Quantity']),
             initialPrice: BigInt(takerOrderMsg.tags['X-Order-Price']),
             executedValue: BigInt(takerOrderMsg.tags['X-Executed-Value']),
+        });
+    }
+
+    async cancelOrder(params: CancelOrderParams, signer: ReturnType<typeof createDataItemSigner>): Promise<PerpOrder> {
+        const { market, orderId } = CancelOrderParamsSchema.parse(params);
+
+        const messageId = await message({
+            process: market.id,
+            signer,
+            tags: makeArweaveTxTags({
+                Action: 'Cancel-Order',
+                'Order-Id': orderId,
+            }),
+        });
+
+        const res = await result({
+            message: messageId,
+            process: market.id,
+        });
+
+        const orderMessage = res.Messages.find((msg) =>
+            msg.Tags.some((tag: ArweaveTxTag) => tag.name === 'X-Order-Status' && tag.value === 'Canceled'),
+        );
+        const tags = Object.fromEntries<string>(
+            orderMessage.Tags.map(({ name, value }: ArweaveTxTag) => [name, value]),
+        );
+
+        // TODO: Handle error
+        //       eg. Cancel an order that's not yours / Cancel an ID that does not exist
+
+        return PerpOrderSchema.parse({
+            id: tags['X-Order-Id'],
+            type: tags['X-Order-Type'] as OrderType,
+            status: tags['X-Order-Status'] as OrderStatus,
+            side: tags['X-Order-Side'] as OrderSide,
+            originalQuantity: BigInt(tags['X-Original-Quantity']),
+            executedQuantity: BigInt(tags['X-Executed-Quantity']),
+            initialPrice: BigInt(tags['X-Order-Price']),
+            executedValue: BigInt(tags['X-Executed-Value']),
         });
     }
 
