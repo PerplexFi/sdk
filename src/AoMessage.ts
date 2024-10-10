@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { GetTransactionsQuery, GetTransactionsQueryData, GetTransactionsQueryVariables } from './utils/goldsky';
+import { GetTransactionsQuery, GetTransactionsQueryData, GetTransactionsQueryVariables } from './utils/gateway';
 import { queryGraphQL } from './utils/graphql';
 import { ZodArweaveId } from './utils/zod';
 
@@ -66,37 +66,40 @@ export function makeArweaveTxTags(tags: Record<string, unknown>): ArweaveTxTag[]
  * If more are found only the first message is returned.
  */
 export async function lookForMessage(args: {
-    // tagsFilter: Array<{ name: string; values: string[] }>;
-    tagsFilter: Array<[string, unknown[]]>;
+    tagsFilter: Array<[string, unknown[]]>; // Order is important, put most restrictive to least restrictive tag for better perfs
     isMessageValid: (msg: AoMessage) => boolean;
     pollArgs: { gatewayUrl: string; retryAfterMs: number; maxRetries: number };
 }): Promise<AoMessage | null> {
-    let min = Math.floor(Date.now() / 1000);
-
     for (let retryCount = 0; retryCount < args.pollArgs.maxRetries; retryCount += 1) {
-        // 1. fetch
-        const data = await queryGraphQL<GetTransactionsQueryData, GetTransactionsQueryVariables>(
-            args.pollArgs.gatewayUrl,
-            GetTransactionsQuery,
-            {
-                tagsFilter: args.tagsFilter
-                    .map(([name, values]) => ({
-                        name,
-                        values: values.filter((val) => val !== null && val !== undefined).map((val) => `${val}`),
-                    }))
-                    .filter(({ values }) => values.length > 0),
-                min,
-            },
-        );
+        let after: string | undefined;
+        let hasNextPage = true;
 
-        const transactions = data?.transactions?.edges ?? [];
-        for (const { node: transaction } of transactions) {
-            const aoMessage = arweaveTxToAoMessage(transaction);
-            if (args.isMessageValid(aoMessage)) {
-                return aoMessage;
+        while (hasNextPage) {
+            const data = await queryGraphQL<GetTransactionsQueryData, GetTransactionsQueryVariables>(
+                args.pollArgs.gatewayUrl,
+                GetTransactionsQuery,
+                {
+                    tagsFilter: args.tagsFilter
+                        .map(([name, values]) => ({
+                            name,
+                            values: values.filter((val) => val !== null && val !== undefined).map((val) => `${val}`),
+                        }))
+                        .filter(({ values }) => values.length > 0),
+                    after,
+                },
+            );
+
+            hasNextPage = data.transactions.pageInfo.hasNextPage;
+
+            const txs = data?.transactions?.edges ?? [];
+            for (const { node: transaction } of txs) {
+                const aoMessage = arweaveTxToAoMessage(transaction);
+                if (args.isMessageValid(aoMessage)) {
+                    return aoMessage;
+                }
             }
+            after = txs.at(-1)?.cursor;
         }
-        min = transactions.reduce((acc, cur) => Math.max(acc, cur.node.ingested_at), min);
 
         await new Promise((resolve) => {
             // Sleep before trying again (minimum 100ms)

@@ -101,3 +101,11 @@ export const PerpOrderSchema = z.object({
 });
 
 export type PerpOrder = z.infer<typeof PerpOrderSchema>;
+
+export const DepositCollateralParamsSchema = z.object({
+    accountId: ZodArweaveId,
+    token: TokenSchema,
+    quantity: z.bigint().positive(),
+});
+
+export type DepositCollateralParams = z.infer<typeof DepositCollateralParamsSchema>;

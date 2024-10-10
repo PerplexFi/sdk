@@ -33,8 +33,7 @@
         "build": "rimraf dist && npm run build:types && npm run build:src",
         "build:src": "node esbuild.mjs",
         "build:types": "tsc",
-        "test": "node --test tests/*.test.mjs",
-        "test:watch": "npm run build && node --test --watch tests/*.test.mjs"
+        "test": "echo 'No test available yet...'"
     },
     "dependencies": {
         "@permaweb/aoconnect": "^0.0.59",

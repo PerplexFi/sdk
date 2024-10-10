@@ -5,6 +5,8 @@ import { AoConnectMessage, lookForMessage, makeArweaveTxTags } from './AoMessage
 import {
     CancelOrderParams,
     CancelOrderParamsSchema,
+    DepositCollateralParams,
+    DepositCollateralParamsSchema,
     PerpMarket,
     PerpOrder,
     PerpOrderSchema,
@@ -17,15 +19,16 @@ import {
     SwapParamsSchema,
     Token,
 } from './types';
+import { bigIntToDecimal } from './utils/numbers';
 import { OrderBookDataSchema } from './utils/orderbook';
 import { fetchAllPerpMarkets, fetchAllPools, fetchAllTokens } from './utils/perplexApi';
 import { getPoolOppositeToken } from './utils/pool';
-import { OrderSide, OrderStatus, OrderType } from './utils/zod';
-import { bigIntToDecimal } from './utils/numbers';
+import { OrderSide, OrderStatus, OrderType, ZodArweaveId } from './utils/zod';
 
 const PerplexClientConfigSchema = z.object({
     apiUrl: z.string().url(),
     gatewayUrl: z.string().url(),
+    walletAddress: ZodArweaveId,
     amm: z.object({
         reservesCacheTTL: z.number(), // In milliseconds
     }),
@@ -37,6 +40,7 @@ type PerplexClientConfig = z.infer<typeof PerplexClientConfigSchema>;
 
 export class PerplexClient {
     readonly config: PerplexClientConfig;
+    readonly signer: ReturnType<typeof createDataItemSigner>;
     #cachedTokens: Map<string, Token>;
     #cachedTokensByTicker: Map<string, string>;
     #cachedPools: Map<string, Pool>;
@@ -46,8 +50,9 @@ export class PerplexClient {
     #poolReserves: Map<string, PoolReserves>;
     #poolReservesLastFetchedAt: Map<string, Date>;
 
-    constructor(config: PerplexClientConfig) {
+    constructor(config: PerplexClientConfig, signer: ReturnType<typeof createDataItemSigner>) {
         this.config = PerplexClientConfigSchema.parse(config);
+        this.signer = signer;
 
         this.#cachedTokens = new Map();
         this.#cachedTokensByTicker = new Map();
@@ -106,9 +111,9 @@ export class PerplexClient {
         // 2. Poll gateway to find the resulting message
         const confirmationMessage = await lookForMessage({
             tagsFilter: [
-                ['Action', ['Transfer']],
-                ['From-Process', [pool.id]],
                 ['Pushed-For', [transferId]],
+                ['From-Process', [pool.id]],
+                ['Action', ['Transfer']],
             ],
             isMessageValid: (msg) => !!msg, // Message just has to exist to be valid
             pollArgs: {
@@ -237,10 +242,7 @@ export class PerplexClient {
         };
     }
 
-    async placePerpOrder(
-        params: PlacePerpOrderParams,
-        signer: ReturnType<typeof createDataItemSigner>,
-    ): Promise<PerpOrder> {
+    async placePerpOrder(params: PlacePerpOrderParams): Promise<PerpOrder> {
         const parsedParams = PlacePerpOrderParamsSchema.parse(params);
         const { marketId, type, side, size, reduceOnly } = parsedParams;
         const market = this.getPerpMarketById(marketId);
@@ -254,7 +256,7 @@ export class PerplexClient {
         let transferId: string;
         if (type === OrderType.MARKET) {
             transferId = await message({
-                signer,
+                signer: this.signer,
                 process: market.accountId,
                 tags: makeArweaveTxTags({
                     Action: 'Place-Order',
@@ -274,7 +276,7 @@ export class PerplexClient {
             }
 
             transferId = await message({
-                signer,
+                signer: this.signer,
                 process: market.accountId,
                 tags: makeArweaveTxTags({
                     Action: 'Place-Order',
@@ -319,13 +321,13 @@ export class PerplexClient {
         });
     }
 
-    async cancelOrder(params: CancelOrderParams, signer: ReturnType<typeof createDataItemSigner>): Promise<PerpOrder> {
+    async cancelOrder(params: CancelOrderParams): Promise<PerpOrder> {
         const { marketId, orderId } = CancelOrderParamsSchema.parse(params);
         const market = this.getPerpMarketById(marketId);
 
         const messageId = await message({
+            signer: this.signer,
             process: market.id,
-            signer,
             tags: makeArweaveTxTags({
                 Action: 'Cancel-Order',
                 'Order-Id': orderId,
@@ -360,14 +362,39 @@ export class PerplexClient {
         });
     }
 
-    // async depositCollateral(
-    //     params: DepositCollateralParams,
-    //     signer: ReturnType<typeof createDataItemSigner>,
-    // ): Promise<void> {
-    //     // Transfer token to account
-    //     // Look for Collateral-Added
-    //     // Or Error (eg. not enough funds, maxCollateral limit reached, ...)
-    // }
+    async depositCollateral(params: DepositCollateralParams): Promise<void> {
+        const { accountId, token, quantity } = DepositCollateralParamsSchema.parse(params);
+
+        const transferId = await message({
+            signer: this.signer,
+            process: token.id,
+            tags: makeArweaveTxTags({
+                Action: 'Transfer',
+                Quantity: quantity,
+                Recipient: accountId,
+            }),
+        });
+
+        const confirmationMessage = await lookForMessage({
+            tagsFilter: [['Pushed-For', [transferId]]],
+            isMessageValid: (msg) =>
+                msg.tags['Action'] === 'Collateral-Added' ||
+                (msg.tags['Action'] === 'Transfer' && !!msg.tags['X-Error']),
+            pollArgs: {
+                gatewayUrl: this.config.gatewayUrl,
+                maxRetries: 40,
+                retryAfterMs: 500, // 40*500ms = 20s
+            },
+        });
+
+        if (!confirmationMessage) {
+            throw new Error(`Deposit has failed, more infos at https://ao.link/#/message/${transferId}`);
+        }
+
+        if (confirmationMessage.tags['Action'] === 'Transfer') {
+            throw new Error(confirmationMessage.tags['X-Error']);
+        }
+    }
 
     getTokenById(tokenId: string): Token {
         const cachedToken = this.#cachedTokens.get(tokenId);
