@@ -1,4 +1,4 @@
-import { PerpMarket, Pool, Token } from '../types';
+import { OrderBook, OrderBookSchema, PerpMarket, Pool, Token } from '../types';
 import { gql, queryGraphQL } from './graphql';
 import { decimalToBigInt } from './numbers';
 
@@ -20,7 +20,7 @@ type TokenFragmentData = {
     logo: string | null;
 };
 
-export const GetMarketDepthQuery = gql(`
+const GetMarketDepthQuery = gql(`
     query marketDepth($marketId: ID!) {
         marketDepth(marketId: $marketId) {
             asks {
@@ -35,11 +35,11 @@ export const GetMarketDepthQuery = gql(`
     }
 `);
 
-export type GetMarketDepthQueryVariables = {
+type GetMarketDepthQueryVariables = {
     marketId: string;
 };
 
-export type GetMarketDepthQueryData = {
+type GetMarketDepthQueryData = {
     marketDepth: {
         asks: {
             price: string;
@@ -165,4 +165,23 @@ export async function fetchAllPerpMarkets(perplexApiUrl: string): Promise<PerpMa
         minQuantityTickSize: decimalToBigInt(market.minQuantityTickSize, market.base.denomination),
         oraclePrice: BigInt(market.oraclePrice),
     }));
+}
+
+export async function fetchOrderBook(perplexApiUrl: string, marketId: string): Promise<OrderBook> {
+    const { marketDepth } = await queryGraphQL<GetMarketDepthQueryData, GetMarketDepthQueryVariables>(
+        perplexApiUrl,
+        GetMarketDepthQuery,
+        { marketId },
+    );
+
+    return OrderBookSchema.parse({
+        asks: marketDepth.asks.map(({ price, size }) => ({
+            price: BigInt(price),
+            size: BigInt(size),
+        })),
+        bids: marketDepth.bids.map(({ price, size }) => ({
+            price: BigInt(price),
+            size: BigInt(size),
+        })),
+    });
 }

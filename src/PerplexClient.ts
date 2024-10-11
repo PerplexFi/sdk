@@ -7,6 +7,7 @@ import {
     CancelOrderParamsSchema,
     DepositCollateralParams,
     DepositCollateralParamsSchema,
+    OrderBook,
     PerpMarket,
     PerpOrder,
     PerpOrderSchema,
@@ -21,7 +22,7 @@ import {
 } from './types';
 import { bigIntToDecimal } from './utils/numbers';
 import { OrderBookDataSchema } from './utils/orderbook';
-import { fetchAllPerpMarkets, fetchAllPools, fetchAllTokens } from './utils/perplexApi';
+import { fetchAllPerpMarkets, fetchAllPools, fetchAllTokens, fetchOrderBook } from './utils/perplexApi';
 import { getPoolOppositeToken } from './utils/pool';
 import { OrderSide, OrderStatus, OrderType, ZodArweaveId } from './utils/zod';
 
@@ -64,28 +65,36 @@ export class PerplexClient {
         this.#poolReservesLastFetchedAt = new Map();
     }
 
-    async initialize(): Promise<void> {
-        const tokens = await fetchAllTokens(this.config.apiUrl);
-        tokens.forEach((token) => {
-            this.#cachedTokens.set(token.id, token);
-            this.#cachedTokensByTicker.set(token.ticker, token.id);
-        });
+    async initialize(skip: ('tokens' | 'ammPools' | 'perpMarkets')[] = []): Promise<void> {
+        if (!skip.includes('tokens')) {
+            const tokens = await fetchAllTokens(this.config.apiUrl);
+            tokens.forEach((token) => {
+                this.#cachedTokens.set(token.id, token);
+                this.#cachedTokensByTicker.set(token.ticker, token.id);
+            });
+        }
 
-        const pools = await fetchAllPools(this.config.apiUrl);
-        pools.forEach((pool) => {
-            this.#cachedPools.set(pool.id, pool);
-            this.#cachedPoolsByTicker.set(`${pool.tokenBase.ticker}/${pool.tokenQuote.ticker}`, pool.id);
-            this.#cachedPoolsByTicker.set(`${pool.tokenQuote.ticker}/${pool.tokenBase.ticker}`, pool.id);
-        });
+        if (!skip.includes('ammPools')) {
+            const pools = await fetchAllPools(this.config.apiUrl);
+            pools.forEach((pool) => {
+                this.#cachedPools.set(pool.id, pool);
+                this.#cachedPoolsByTicker.set(`${pool.tokenBase.ticker}/${pool.tokenQuote.ticker}`, pool.id);
+                this.#cachedPoolsByTicker.set(`${pool.tokenQuote.ticker}/${pool.tokenBase.ticker}`, pool.id);
+            });
+        }
 
-        const perpMarkets = await fetchAllPerpMarkets(this.config.apiUrl);
-        perpMarkets.forEach((perpMarket) => {
-            this.#cachedPerpMarkets.set(perpMarket.id, perpMarket);
-            this.#cachedPerpMarketsByTicker.set(`${perpMarket.baseTicker}/USD`, perpMarket.id);
-        });
+        if (!skip.includes('perpMarkets')) {
+            const perpMarkets = await fetchAllPerpMarkets(this.config.apiUrl);
+            perpMarkets.forEach((perpMarket) => {
+                this.#cachedPerpMarkets.set(perpMarket.id, perpMarket);
+                this.#cachedPerpMarketsByTicker.set(`${perpMarket.baseTicker}/USD`, perpMarket.id);
+            });
+        }
+
+        console.log('Client initialized!');
     }
 
-    async swap(params: SwapParams, signer: ReturnType<typeof createDataItemSigner>): Promise<Swap> {
+    async swap(params: SwapParams): Promise<Swap> {
         const { poolId, quantity, token, minExpectedOutput } = SwapParamsSchema.parse(params);
         const pool = this.getPoolById(poolId);
 
@@ -95,7 +104,7 @@ export class PerplexClient {
         }
 
         const transferId = await message({
-            signer,
+            signer: this.signer,
             process: token.id,
             tags: makeArweaveTxTags({
                 Action: 'Transfer',
@@ -394,6 +403,15 @@ export class PerplexClient {
         if (confirmationMessage.tags['Action'] === 'Transfer') {
             throw new Error(confirmationMessage.tags['X-Error']);
         }
+    }
+
+    async getOrderBook(marketId: string): Promise<OrderBook> {
+        const perpMarket = this.getPerpMarketById(marketId);
+        if (!perpMarket) {
+            throw new Error('PerpMarket not found');
+        }
+
+        return fetchOrderBook(this.config.apiUrl, marketId);
     }
 
     getTokenById(tokenId: string): Token {

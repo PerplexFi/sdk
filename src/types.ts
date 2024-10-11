@@ -109,3 +109,15 @@ export const DepositCollateralParamsSchema = z.object({
 });
 
 export type DepositCollateralParams = z.infer<typeof DepositCollateralParamsSchema>;
+
+const OrderBookPriceLevelSchema = z.object({
+    price: z.bigint(),
+    size: z.bigint(),
+});
+
+export const OrderBookSchema = z.object({
+    asks: z.array(OrderBookPriceLevelSchema),
+    bids: z.array(OrderBookPriceLevelSchema),
+});
+
+export type OrderBook = z.infer<typeof OrderBookSchema>;
