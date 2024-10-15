@@ -1,4 +1,4 @@
-import { PerpMarket, Pool, Token } from '../types';
+import { OrderBook, OrderBookSchema, PerpMarket } from '../types';
 import { gql, queryGraphQL } from './graphql';
 import { decimalToBigInt } from './numbers';
 
@@ -20,39 +20,7 @@ type TokenFragmentData = {
     logo: string | null;
 };
 
-export const GetMarketDepthQuery = gql(`
-    query marketDepth($marketId: ID!) {
-        marketDepth(marketId: $marketId) {
-            asks {
-                price
-                size
-            }
-            bids {
-                price
-                size
-            }
-        }
-    }
-`);
-
-export type GetMarketDepthQueryVariables = {
-    marketId: string;
-};
-
-export type GetMarketDepthQueryData = {
-    marketDepth: {
-        asks: {
-            price: string;
-            size: string;
-        }[];
-        bids: {
-            price: string;
-            size: string;
-        }[];
-    };
-};
-
-const GetTokensQuery = gql(`
+export const GetTokensQuery = gql(`
     ${TokenFragment}
 
     query tokens {
@@ -62,17 +30,11 @@ const GetTokensQuery = gql(`
     }
 `);
 
-type GetTokensQueryData = {
+export type GetTokensQueryData = {
     tokens: TokenFragmentData[];
 };
 
-export async function fetchAllTokens(perplexApiUrl: string): Promise<Token[]> {
-    const { tokens } = await queryGraphQL<GetTokensQueryData>(perplexApiUrl, GetTokensQuery, {});
-
-    return tokens;
-}
-
-const GetPoolsQuery = gql(`
+export const GetPoolsQuery = gql(`
     ${TokenFragment}
 
     query pools {
@@ -85,29 +47,22 @@ const GetPoolsQuery = gql(`
             quote {
                 ...TokenFragment
             }
+            lpToken {
+                ...TokenFragment
+            }
         } 
     }
 `);
 
-type GetPoolsQueryData = {
+export type GetPoolsQueryData = {
     ammPools: {
         id: string;
         feeRate: string;
         base: TokenFragmentData;
         quote: TokenFragmentData;
+        lpToken: TokenFragmentData;
     }[];
 };
-
-export async function fetchAllPools(perplexApiUrl: string): Promise<Pool[]> {
-    const { ammPools } = await queryGraphQL<GetPoolsQueryData>(perplexApiUrl, GetPoolsQuery, {});
-
-    return ammPools.map((pool) => ({
-        id: pool.id,
-        feeRate: Number(pool.feeRate),
-        tokenBase: pool.base,
-        tokenQuote: pool.quote,
-    }));
-}
 
 const GetPerpMarketsQuery = gql(`
     query perpMarkets {
@@ -118,6 +73,7 @@ const GetPerpMarketsQuery = gql(`
                 minQuantityTickSize
                 makerFeeRate
                 takerFeeRate
+                oraclePrice
                 base {
                     ticker
                     denomination
@@ -139,6 +95,7 @@ type GetPerpMarketsQueryData = {
         minQuantityTickSize: string;
         makerFeeRate: string;
         takerFeeRate: string;
+        oraclePrice: string;
         base: {
             ticker: string;
             denomination: number;
@@ -152,12 +109,107 @@ type GetPerpMarketsQueryData = {
 };
 
 export async function fetchAllPerpMarkets(perplexApiUrl: string): Promise<PerpMarket[]> {
-    const { markets } = await queryGraphQL<GetPerpMarketsQueryData>(perplexApiUrl, GetPerpMarketsQuery, {});
+    const { markets } = await queryGraphQL<GetPerpMarketsQueryData>(perplexApiUrl, GetPerpMarketsQuery);
 
     return markets.map((market) => ({
         id: market.id,
         accountId: market.quote.id,
+        baseTicker: market.base.ticker,
+        baseDenomination: market.base.denomination,
         minPriceTickSize: decimalToBigInt(market.minPriceTickSize, market.quote.denomination),
         minQuantityTickSize: decimalToBigInt(market.minQuantityTickSize, market.base.denomination),
+        oraclePrice: BigInt(market.oraclePrice),
     }));
+}
+
+const GetMarketDepthQuery = gql(`
+    query marketDepth($marketId: ID!) {
+        marketDepth(marketId: $marketId) {
+            asks {
+                price
+                size
+            }
+            bids {
+                price
+                size
+            }
+        }
+    }
+`);
+
+type GetMarketDepthQueryVariables = {
+    marketId: string;
+};
+
+type GetMarketDepthQueryData = {
+    marketDepth: {
+        asks: {
+            price: string;
+            size: string;
+        }[];
+        bids: {
+            price: string;
+            size: string;
+        }[];
+    };
+};
+
+export async function fetchOrderBook(perplexApiUrl: string, marketId: string): Promise<OrderBook> {
+    const { marketDepth } = await queryGraphQL<GetMarketDepthQueryData, GetMarketDepthQueryVariables>(
+        perplexApiUrl,
+        GetMarketDepthQuery,
+        { marketId },
+    );
+
+    return OrderBookSchema.parse({
+        asks: marketDepth.asks.map(({ price, size }) => ({
+            price: BigInt(price),
+            size: BigInt(size),
+        })),
+        bids: marketDepth.bids.map(({ price, size }) => ({
+            price: BigInt(price),
+            size: BigInt(size),
+        })),
+    });
+}
+
+const GetPositionsQuery = gql(`
+    query positions($wallet: String!) {
+        positions(wallet: $wallet, limit: 100) {
+            size
+            fundingQuantity
+            entryPrice
+            market {
+                id
+            }
+        }
+    }
+`);
+
+type GetPositionsQueryVariables = {
+    wallet: string;
+};
+
+type GetPositionsQueryData = {
+    positions: {
+        size: string;
+        fundingQuantity: string;
+        entryPrice: string;
+        market: {
+            id: string;
+        };
+    }[];
+};
+
+export async function fetchAllPositions(
+    perplexApiUrl: string,
+    wallet: string,
+): Promise<GetPositionsQueryData['positions']> {
+    const { positions } = await queryGraphQL<GetPositionsQueryData, GetPositionsQueryVariables>(
+        perplexApiUrl,
+        GetPositionsQuery,
+        { wallet },
+    );
+
+    return positions;
 }

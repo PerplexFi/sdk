@@ -3,7 +3,6 @@ import { gql } from './graphql';
 const TransactionFragment = gql(`
     fragment TransactionFragment on Transaction {
         id
-        ingested_at
         owner {
             address
         }
@@ -17,7 +16,6 @@ const TransactionFragment = gql(`
 
 type GatewayTransaction = {
     id: string;
-    ingested_at: number;
     owner: {
         address: string;
     };
@@ -31,14 +29,17 @@ type GatewayTransaction = {
 export const GetTransactionsQuery = gql(`
     ${TransactionFragment}
 
-    query transactions($tagsFilter: [TagFilter!]!, $min: Int!) {
+    query transactions($tagsFilter: [TagFilter!]!, $after: String) {
         transactions(
             first: 100,
-            sort: INGESTED_AT_ASC,
-            ingested_at: { min: $min },
+            after: $after
             tags: $tagsFilter
         ) {
+            pageInfo {
+                hasNextPage
+            }
             edges {
+                cursor
                 node {
                     ...TransactionFragment
                 }
@@ -49,11 +50,12 @@ export const GetTransactionsQuery = gql(`
 
 export type GetTransactionsQueryVariables = {
     tagsFilter: Array<{ name: string; values: string[] }>;
-    min: number;
+    after?: string | null;
 };
 
 export type GetTransactionsQueryData = {
     transactions: {
-        edges: Array<{ node: GatewayTransaction }>;
+        pageInfo: { hasNextPage: boolean };
+        edges: Array<{ cursor: string; node: GatewayTransaction }>;
     };
 };
