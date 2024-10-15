@@ -5,10 +5,10 @@ export function gql(query: string): string {
         .trim();
 }
 
-export async function queryGraphQL<Data, Variables = Record<string, never>>(
+export async function queryGraphQL<Data, Variables = never>(
     apiUrl: string,
     query: string,
-    variables: Variables,
+    variables?: Variables,
 ): Promise<Data> {
     const res = await fetch(apiUrl, {
         method: 'POST',
