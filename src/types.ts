@@ -45,8 +45,8 @@ export type SwapParams = z.infer<typeof SwapParamsSchema>;
 
 export const SwapMinOutputParamsSchema = z.object({
     poolId: ZodArweaveId,
-    quantity: z.bigint(),
     tokenId: ZodArweaveId,
+    quantity: z.bigint(),
     slippageTolerance: z
         .number()
         .gte(0, 'slippageTolerance must be between 0 and 1')

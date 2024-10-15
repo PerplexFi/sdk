@@ -218,7 +218,7 @@ export class PerplexClient {
             };
         }
 
-        const { poolId, quantity, tokenId, slippageTolerance } = swapMinOutputParams.data;
+        const { poolId, tokenId, quantity, slippageTolerance } = swapMinOutputParams.data;
 
         const pool = this.cache.getPool(poolId);
         if (!pool) {

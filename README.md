@@ -10,46 +10,131 @@ npm install --save @perplexfi/sdk
 
 ## Usage
 
-We recommend you to directly use our Aetheris Tokens and Pools
+### Client instantiation
+
+This SDK is using `aoconnect`'s methods under the hood, so you need to provide a valid signer to the client.
 
 ```ts
-import { Aetheris } from '@perplexfi/sdk';
+import { readFileSync } from 'fs';
+import { PerplexClient } from '@perplexfi/sdk';
+
+const walletAddress = '<insert wallet address>';
+
+const wallet = JSON.parse(readFileSync(`/path/to/wallets/${walletAddress}.json`).toString());
+
+const client = new PerplexClient(
+    {
+        /* The URL of the Perplex API */
+        apiUrl: 'https://api.perplex.finance/graphql',
+
+        /* You can set any gateway URL you want, we recommend using Goldsky's gateway */
+        gatewayUrl: 'https://arweave-search.goldsky.com/graphql',
+
+        /* Make sure the walletAddress corresponds to the wallet you're sending in createDataItemSigner */
+        walletAddress,
+    },
+    createDataItemSigner(wallet),
+);
 ```
 
-### How to make a swap?
+### Set your cache
 
-To make a swap, you need a pool
+There are 2 "kinds" of cached data: hot and cold. Cold means data that is not updated frequently, like pool infos, token infos, ... Hot means data that is updated frequently, like wallet's balance, pool reserves, ...
+
+You have 2 options to set your local cold cache:
+
+-   Call `client.setCache()` with the result of a previous `client.cache.serialize()` call. Calling setCache creates a new Cache instance, which will erase all the hot infos stored! (ie. Pool reserves, wallet's balance, ...)
+-   Call one of `await client.fetchPoolInfos()`, `await client.fetchPerpInfos()`, ...
+
+To set your local hot cache, you need to call the right methods (must be done after setting the cold cache):
+
+-   `await client.updatePoolReserves("<poolId>")`
 
 ```ts
-const pool = Aetheris.Pools.AIR_EARTH;
+// Previously...
+const CACHED_INFOS = oldClient.cache.serialize();
+
+// Later...
+newClient.setCache(CACHED_INFOS);
 ```
 
-Then you can make a swap using the `swap` method. The `swap` method takes the following parameters:
+```ts
+await client.fetchPoolInfos();
+```
 
--   `signer`: cf. aoconnect's [createDataItemSigner](https://github.com/permaweb/ao/tree/main/connect#createdataitemsigner)
--   `input`: a TokenQuantity of one of the pool's tokens
--   `minExpectedOutput`: a TokenQuantity of the other token, reprensenting the minimum expected output _(slippage protection)_
+### Create a constants file
+
+We recommend fetching the constants once and store them once and for all in a file.
 
 ```ts
-// Specify your input amount
-const input = Aetheris.Tokens.AIR.fromReadable('0.02');
+// constants.ts
 
-// Required by `getExpectedOutput`
-await pool.updateReserves();
+export const POOLS = {
+    FIRE_EARTH: '<fire/earth pool ID>',
+    WATER_AIR: '<water/air pool ID>',
+    AO_USDC: '<ao/usdc pool ID>',
+    // ...
+};
 
-// 0.02 represents 2% slippage tolerance.
-// This method requires the pool to have up-to-date reserves, hence the `updateReserves` call above.
-const minExpectedOutput = pool.getExpectedOutput(input, 0.02);
+export const TOKENS = {
+    FIRE: '<fire token ID>',
+    EARTH: '<earth token ID>',
+    WATER: '<water token ID>',
+    AIR: '<air token ID>',
+    // ...
+};
+```
 
-// This method signs and sends only 1 transaction: the Transfer of `input`
-const swap = await pool.swap({
-    signer: createDataItemSigner(wallet),
-    input,
-    minExpectedOutput,
+### Make a swap
+
+To make a swap, call the `swap` method on the client instance.
+
+```ts
+import { decimalToBigInt, bigIntToDecimal } from '@perplexfi/sdk';
+
+import { POOLS, TOKENS } from './constants';
+
+const token = client.cache.getTokenById(TOKENS.FIRE);
+const quantityIn = decimalToBigInt(0.1, token.denomination);
+
+// To use this function, you need to update the reserves first
+const swapMinOutput = client.getSwapMinOutput({
+    poolId: POOLS.FIRE_EARTH,
+    tokenId: TOKENS.FIRE,
+    quantity: quantityIn,
+    slippageTolerance: 0.05, // Percentage (eg. 5%)
 });
 
-// Here the swap should be successful
-// If anything wrong happens, an error will be thrown
+if (swapMinOutput.ok) {
+    const swap = await client.swap({
+        poolId: POOLS.FIRE_EARTH,
+        tokenId: TOKENS.FIRE,
+        quantity: quantityIn,
+        minOutput: swapMinOutput.data,
+    });
+
+    if (swap.ok) {
+        console.log('Swap successful!');
+        console.log(`     ID: ${swap.data.id}`);
+        console.log(
+            `     Input: ${bigIntToDecimal(swap.data.quantityIn, swap.data.tokenIn.denomination)} ${swap.data.tokenIn.ticker}`,
+        );
+        console.log(
+            `     Output: ${bigIntToDecimal(swap.data.quantityOut, swap.data.tokenOut.denomination)} ${swap.data.tokenOut.ticker}`,
+        );
+        console.log(
+            `     Output: ${bigIntToDecimal(swap.data.quantityOut, swap.data.tokenOut.denomination)} ${swap.data.tokenOut.ticker}`,
+        );
+        console.log(
+            `     Fees: ${bigIntToDecimal(swap.data.fees, swap.data.tokenOut.denomination)} ${swap.data.tokenOut.ticker}`,
+        );
+        console.log(`     Price: ${swap.data.price}`);
+    } else {
+        console.error("Couldn't make the swap:", swap.error);
+    }
+} else {
+    console.error("Couldn't get the min output for the swap:", swapMinOutput.error);
+}
 ```
 
 ## License
