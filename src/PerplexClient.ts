@@ -29,15 +29,23 @@ import { fetchAllPositions, fetchLatestFundingRate, fetchOrderBook } from './uti
 import { getPoolOppositeToken } from './utils/pool';
 import { OrderSide, OrderStatus, OrderType, ZodArweaveId } from './utils/zod';
 
+const DEFAULT_TTL = 1000 * 60 * 10; // 10 minutes
+
 const PerplexClientConfigSchema = z.object({
     apiUrl: z.string().url(),
     gatewayUrl: z.string().url(),
     walletAddress: ZodArweaveId,
-    amm: z.object({
-        reservesCacheTTL: z.number(), // In milliseconds
-    }),
+    amm: z
+        .object({
+            reservesCacheTTL: z.number(), // In milliseconds
+        })
+        .default({ reservesCacheTTL: DEFAULT_TTL }),
+    token: z
+        .object({
+            balanceCacheTTL: z.number(), // In milliseconds
+        })
+        .default({ balanceCacheTTL: DEFAULT_TTL }),
     // perp: z.object({
-    //     // add configs
     // }),
 });
 type PerplexClientConfig = z.infer<typeof PerplexClientConfigSchema>;
@@ -47,7 +55,7 @@ export class PerplexClient {
     public readonly signer: ReturnType<typeof createDataItemSigner>;
     public cache: PerplexCache;
 
-    constructor(config: PerplexClientConfig, signer: ReturnType<typeof createDataItemSigner>) {
+    constructor(config: z.input<typeof PerplexClientConfigSchema>, signer: ReturnType<typeof createDataItemSigner>) {
         this.config = PerplexClientConfigSchema.parse(config);
         this.signer = signer;
 
@@ -66,9 +74,19 @@ export class PerplexClient {
         this.cache = new PerplexCache(jsonData);
     }
 
-    public async fetchPoolInfos(): Promise<void> {
-        await this.cache.fetchTokensInfos(this.config.apiUrl);
-        await this.cache.fetchPoolsInfos(this.config.apiUrl);
+    public async initializeCache(type?: ('amm' | 'spot' | 'perp')[]): Promise<void> {
+        const types = new Set(type ?? ['amm', 'spot', 'perp']);
+
+        for (const cacheType of types.values()) {
+            if (cacheType === 'amm') {
+                await this.cache.fetchTokensInfos(this.config.apiUrl);
+                await this.cache.fetchPoolsInfos(this.config.apiUrl);
+            } else if (cacheType === 'spot') {
+                // TODO
+            } else if (cacheType === 'perp') {
+                // TODO
+            }
+        }
     }
 
     public async getLatestFundingRate(marketId: string): Promise<Result<number>> {
@@ -230,6 +248,80 @@ export class PerplexClient {
                 error: 'Process is not responding',
             };
         }
+    }
+
+    async updateAllPoolReserves(): Promise<Map<string, Result<PoolReserves>>> {
+        const pools = this.cache.getPools();
+
+        return new Map(
+            await Promise.all(
+                pools.map(
+                    async (pool): Promise<[string, Result<PoolReserves>]> => [
+                        pool.id,
+                        await this.updatePoolReserves(pool.id),
+                    ],
+                ),
+            ),
+        );
+    }
+
+    async updateTokenBalance(tokenId: string): Promise<Result<bigint>> {
+        const token = this.cache.getToken(tokenId);
+        if (!token) {
+            return {
+                ok: false,
+                error: 'Token not found',
+            };
+        }
+
+        const cached = this.cache.getTokenBalance(token.id);
+        const lastFetchedAt = this.cache.getTokenBalanceLastFetchedAt(token.id);
+        if (cached && lastFetchedAt && lastFetchedAt.getTime() + this.config.token.balanceCacheTTL > Date.now()) {
+            return {
+                ok: true,
+                data: cached,
+            };
+        }
+
+        const dryrunRes = await dryrun({
+            process: token.id,
+            tags: makeArweaveTxTags({
+                Action: 'Balance',
+                Target: this.config.walletAddress,
+            }),
+        });
+
+        const outputMessage = (dryrunRes.Messages as AoConnectMessage[]).at(0);
+        if (outputMessage) {
+            const balance = BigInt(outputMessage.Tags.find((tag) => tag.name === 'Balance')?.value ?? '0');
+            this.cache.setTokenBalance(token.id, balance);
+
+            return {
+                ok: true,
+                data: balance,
+            };
+        } else {
+            // Can happen if process is not responding
+            return {
+                ok: false,
+                error: 'Process is not responding',
+            };
+        }
+    }
+
+    async updateAllTokenBalances(): Promise<Map<string, Result<bigint>>> {
+        const tokens = this.cache.getTokens();
+
+        return new Map(
+            await Promise.all(
+                tokens.map(
+                    async (token): Promise<[string, Result<bigint>]> => [
+                        token.id,
+                        await this.updateTokenBalance(token.id),
+                    ],
+                ),
+            ),
+        );
     }
 
     getSwapMinOutput(params: SwapMinOutputParams): Result<bigint> {

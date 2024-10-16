@@ -15,6 +15,7 @@ export type PerplexCacheColdData = Required<z.infer<typeof PerplexCacheSchema>>;
 export class PerplexCache {
     private _tokenInfos: Map<string, Token>;
     private _tokenBalances: Map<string, bigint>;
+    private _tokenBalancesLastFetchedAt: Map<string, Date>;
     private _poolInfos: Map<string, Pool>;
     private _poolReserves: Map<string, PoolReserves>;
     private _poolReservesLastFetchedAt: Map<string, Date>;
@@ -25,6 +26,7 @@ export class PerplexCache {
 
         this._tokenInfos = new Map(tokens.map((token) => [token.id, token]));
         this._tokenBalances = new Map();
+        this._tokenBalancesLastFetchedAt = new Map();
 
         this._poolInfos = new Map(pools.map((pool) => [pool.id, pool]));
         this._poolReserves = new Map();
@@ -94,8 +96,13 @@ export class PerplexCache {
         return this._tokenBalances.get(tokenId) ?? null;
     }
 
+    public getTokenBalanceLastFetchedAt(tokenId: string): Date | null {
+        return this._tokenBalancesLastFetchedAt.get(tokenId) ?? null;
+    }
+
     public setTokenBalance(tokenId: string, balance: bigint): void {
         this._tokenBalances.set(tokenId, balance);
+        this._tokenBalancesLastFetchedAt.set(tokenId, new Date());
     }
 
     public getPoolReserves(poolId: string): PoolReserves | null {

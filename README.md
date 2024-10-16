@@ -41,14 +41,16 @@ const client = new PerplexClient(
 
 There are 2 "kinds" of cached data: hot and cold. Cold means data that is not updated frequently, like pool infos, token infos, ... Hot means data that is updated frequently, like wallet's balance, pool reserves, ...
 
-You have 2 options to set your local cold cache:
+You have different options to set your local cold cache:
 
--   Call `client.setCache()` with the result of a previous `client.cache.serialize()` call. Calling setCache creates a new Cache instance, which will erase all the hot infos stored! (ie. Pool reserves, wallet's balance, ...)
--   Call one of `await client.fetchPoolInfos()`, `await client.fetchPerpInfos()`, ...
+-   Call `client.setCache()` with the result of a previous `PerplexClient.getColdCache()` call. Calling setCache creates a new Cache instance, which will erase all the hot infos stored! (ie. Pool reserves, wallet's balance, ...)
+-   Call `client.initializeCache(['amm'])`
+-   Manually call `await client.cache.fetchPoolInfos()`, `await client.fetchTokenInfos()`, ...
 
 To set your local hot cache, you need to call the right methods (must be done after setting the cold cache):
 
--   `await client.updatePoolReserves("<poolId>")`
+-   `await client.updateAllPoolReserves()`
+-   `await client.updateAllTokenBalances()`
 
 ```ts
 // Previously...
