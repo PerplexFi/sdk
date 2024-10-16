@@ -94,13 +94,14 @@ import { decimalToBigInt, bigIntToDecimal } from '@perplexfi/sdk';
 
 import { POOLS, TOKENS } from './constants';
 
-const token = client.cache.getTokenById(TOKENS.FIRE);
-const quantityIn = decimalToBigInt(0.1, token.denomination);
+const fireToken = client.cache.getTokenById(TOKENS.FIRE);
+const quantityIn = decimalToBigInt(0.1, fireToken.denomination);
 
-// To use this function, you need to update the reserves first
+// To be able to use `getSwapMinOutput`, you need to update the reserves first
+await client.updatePoolReserves(POOLS.FIRE_EARTH);
 const swapMinOutput = client.getSwapMinOutput({
     poolId: POOLS.FIRE_EARTH,
-    tokenId: TOKENS.FIRE,
+    tokenId: fireToken.id, // you can of course use `TOKENS.FIRE` aswell
     quantity: quantityIn,
     slippageTolerance: 0.05, // Percentage (eg. 5%)
 });
@@ -108,27 +109,22 @@ const swapMinOutput = client.getSwapMinOutput({
 if (swapMinOutput.ok) {
     const swap = await client.swap({
         poolId: POOLS.FIRE_EARTH,
-        tokenId: TOKENS.FIRE,
+        tokenId: fireToken.id,
         quantity: quantityIn,
         minOutput: swapMinOutput.data,
     });
 
     if (swap.ok) {
-        console.log('Swap successful!');
-        console.log(`     ID: ${swap.data.id}`);
         console.log(
-            `     Input: ${bigIntToDecimal(swap.data.quantityIn, swap.data.tokenIn.denomination)} ${swap.data.tokenIn.ticker}`,
+            [
+                'Swap successful!',
+                `    ID:     ${swap.data.id}`,
+                `    Input:  ${bigIntToDecimal(swap.data.quantityIn, swap.data.tokenIn.denomination)} ${swap.data.tokenIn.ticker}`,
+                `    Output: ${bigIntToDecimal(swap.data.quantityOut, swap.data.tokenOut.denomination)} ${swap.data.tokenOut.ticker}`,
+                `    Fees:   ${bigIntToDecimal(swap.data.fees, swap.data.tokenOut.denomination)} ${swap.data.tokenOut.ticker}`,
+                `    Price:  ${swap.data.price}`,
+            ].join('\n'),
         );
-        console.log(
-            `     Output: ${bigIntToDecimal(swap.data.quantityOut, swap.data.tokenOut.denomination)} ${swap.data.tokenOut.ticker}`,
-        );
-        console.log(
-            `     Output: ${bigIntToDecimal(swap.data.quantityOut, swap.data.tokenOut.denomination)} ${swap.data.tokenOut.ticker}`,
-        );
-        console.log(
-            `     Fees: ${bigIntToDecimal(swap.data.fees, swap.data.tokenOut.denomination)} ${swap.data.tokenOut.ticker}`,
-        );
-        console.log(`     Price: ${swap.data.price}`);
     } else {
         console.error("Couldn't make the swap:", swap.error);
     }
