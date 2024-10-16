@@ -64,6 +64,30 @@ export type GetPoolsQueryData = {
     }[];
 };
 
+const GetLatestFundingRateQuery = gql(`
+    query latestFundingRate($marketId: ID!) {
+        latestFundingRate(marketId: $marketId)
+    }
+`);
+
+type GetLatestFundingRateQueryVariables = {
+    marketId: string;
+};
+
+type GetLatestFundingRateQueryData = {
+    latestFundingRate: string | null;
+};
+
+export async function fetchLatestFundingRate(perplexApiUrl: string, marketId: string): Promise<string | null> {
+    const { latestFundingRate } = await queryGraphQL<GetLatestFundingRateQueryData, GetLatestFundingRateQueryVariables>(
+        perplexApiUrl,
+        GetLatestFundingRateQuery,
+        { marketId },
+    );
+
+    return latestFundingRate;
+}
+
 const GetPerpMarketsQuery = gql(`
     query perpMarkets {
         markets(marketType: PERP) {

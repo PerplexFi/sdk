@@ -10,6 +10,8 @@ const PerplexCacheSchema = z.object({
     perpMarkets: z.array(PerpMarketSchema).optional(),
 });
 
+export type PerplexCacheColdData = Required<z.infer<typeof PerplexCacheSchema>>;
+
 export class PerplexCache {
     private _tokenInfos: Map<string, Token>;
     private _tokenBalances: Map<string, bigint>;
@@ -32,7 +34,7 @@ export class PerplexCache {
         // account
     }
 
-    public serialize(): Required<z.infer<typeof PerplexCacheSchema>> {
+    public serialize(): PerplexCacheColdData {
         return {
             tokens: Array.from(this._tokenInfos.values()),
             pools: Array.from(this._poolInfos.values()),

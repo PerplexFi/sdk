@@ -2,7 +2,7 @@ import { createDataItemSigner, dryrun, message, result } from '@permaweb/aoconne
 import { z } from 'zod';
 
 import { AoConnectMessage, lookForMessage, makeArweaveTxTags } from './AoMessage';
-import { PerplexCache } from './Cache';
+import { PerplexCache, PerplexCacheColdData } from './Cache';
 import {
     CancelOrderParams,
     CancelOrderParamsSchema,
@@ -25,7 +25,7 @@ import {
 } from './types';
 import { bigIntToDecimal } from './utils/numbers';
 import { OrderBookDataSchema } from './utils/orderbook';
-import { fetchAllPositions, fetchOrderBook } from './utils/perplexApi';
+import { fetchAllPositions, fetchLatestFundingRate, fetchOrderBook } from './utils/perplexApi';
 import { getPoolOppositeToken } from './utils/pool';
 import { OrderSide, OrderStatus, OrderType, ZodArweaveId } from './utils/zod';
 
@@ -54,6 +54,14 @@ export class PerplexClient {
         this.cache = new PerplexCache();
     }
 
+    public static async getColdCache(apiUrl: string): Promise<PerplexCacheColdData> {
+        const cache = new PerplexCache();
+
+        await Promise.all([cache.fetchTokensInfos(apiUrl), cache.fetchPoolsInfos(apiUrl)]);
+
+        return cache.serialize();
+    }
+
     public setCache(jsonData: unknown): void {
         this.cache = new PerplexCache(jsonData);
     }
@@ -63,7 +71,23 @@ export class PerplexClient {
         await this.cache.fetchPoolsInfos(this.config.apiUrl);
     }
 
-    async swap(params: SwapParams): Promise<Result<Swap>> {
+    public async getLatestFundingRate(marketId: string): Promise<Result<number>> {
+        const latestFundingRate = await fetchLatestFundingRate(this.config.apiUrl, marketId);
+
+        if (!latestFundingRate) {
+            return {
+                ok: false,
+                error: 'Latest funding rate not found',
+            };
+        }
+
+        return {
+            ok: true,
+            data: Number(latestFundingRate),
+        };
+    }
+
+    public async swap(params: SwapParams): Promise<Result<Swap>> {
         const swapParams = SwapParamsSchema.safeParse(params);
         if (!swapParams.success) {
             return {
