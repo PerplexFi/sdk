@@ -31,7 +31,9 @@ export const OrderType = {
 
 export type OrderType = z.infer<typeof ZodOrderType>;
 
-export const ZodArweaveId = z.string().regex(/^[a-zA-Z0-9_-]{43}$/);
+export const ZodArweaveId = z
+    .string()
+    .regex(/^[a-zA-Z0-9_-]{43}$/, { message: 'This does not look like a valid Arweave ID' });
 
 export const ZodBint = z.string().regex(/^\d+$/);
 
