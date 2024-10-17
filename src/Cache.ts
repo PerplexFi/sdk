@@ -92,6 +92,14 @@ export class PerplexCache {
         return Array.from(this._poolInfos.values());
     }
 
+    public getPerpMarket(perpMarketId: string): PerpMarket | null {
+        return this._perpMarketInfos.get(perpMarketId) ?? null;
+    }
+
+    public getPerpMarkets(): PerpMarket[] {
+        return Array.from(this._perpMarketInfos.values());
+    }
+
     public getTokenBalance(tokenId: string): bigint | null {
         return this._tokenBalances.get(tokenId) ?? null;
     }
@@ -116,9 +124,5 @@ export class PerplexCache {
     public setPoolReserves(poolId: string, reserves: PoolReserves): void {
         this._poolReserves.set(poolId, reserves);
         this._poolReservesLastFetchedAt.set(poolId, new Date());
-    }
-
-    public getPerpMarket(perpMarketId: string): PerpMarket | null {
-        return this._perpMarketInfos.get(perpMarketId) ?? null;
     }
 }

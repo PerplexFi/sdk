@@ -17,6 +17,7 @@ import {
     PlacePerpOrderParamsSchema,
     PoolReserves,
     Result,
+    SearchResult,
     Swap,
     SwapMinOutputParams,
     SwapMinOutputParamsSchema,
@@ -87,6 +88,39 @@ export class PerplexClient {
                 // TODO
             }
         }
+    }
+
+    public search(ticker: string): SearchResult[] {
+        const tokens = this.cache.getTokens().filter((token) => token.ticker === ticker);
+        const pools = this.cache
+            .getPools()
+            .filter((pool) =>
+                [
+                    pool.tokenBase.ticker,
+                    pool.tokenQuote.ticker,
+                    pool.tokenLp.ticker,
+                    `${pool.tokenBase.ticker}-${pool.tokenQuote.ticker}`,
+                    `${pool.tokenBase.ticker}/${pool.tokenQuote.ticker}`,
+                    `${pool.tokenQuote.ticker}-${pool.tokenBase.ticker}`,
+                    `${pool.tokenQuote.ticker}/${pool.tokenBase.ticker}`,
+                ].includes(ticker),
+            );
+        const perpMarkets = this.cache
+            .getPerpMarkets()
+            .filter((market) =>
+                [
+                    market.baseTicker,
+                    `${market.baseTicker}-USD`,
+                    `${market.baseTicker}/USD`,
+                    `${market.baseTicker}-PERP`,
+                    `${market.baseTicker}/PERP`,
+                ].includes(ticker),
+            );
+
+        return tokens
+            .map((token): SearchResult => ({ type: 'Token', data: token }))
+            .concat(pools.map((pool): SearchResult => ({ type: 'Pool', data: pool })))
+            .concat(perpMarkets.map((perpMarket): SearchResult => ({ type: 'PerpMarket', data: perpMarket })));
     }
 
     public async getLatestFundingRate(marketId: string): Promise<Result<number>> {

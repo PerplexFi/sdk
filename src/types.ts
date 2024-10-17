@@ -12,6 +12,20 @@ export type Result<Data> =
           error: string;
       };
 
+export type SearchResult =
+    | {
+          type: 'Token';
+          data: Token;
+      }
+    | {
+          type: 'Pool';
+          data: Pool;
+      }
+    | {
+          type: 'PerpMarket';
+          data: PerpMarket;
+      };
+
 export const TokenSchema = z.object({
     id: ZodArweaveId,
     name: z.string(),

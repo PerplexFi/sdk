@@ -87,6 +87,15 @@ export const TOKENS = {
 };
 ```
 
+To know what IDs to put in the constants file, you can call the following methods:
+
+```ts
+await client.initializeCache();
+console.dir(client.search('ETH'), { depth: null });
+```
+
+`client.search('ETH')` will return an array of entities that match the `ETH` ticker (ie. ETH token, ETH/\* pools, ETH perp market, ETH/USDC spot market, ...)
+
 ### Make a swap
 
 To make a swap, call the `swap` method on the client instance.
